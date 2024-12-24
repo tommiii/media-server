@@ -1,0 +1,158 @@
+x-common: &common
+  environment: &env
+    PUID: ${PUID}
+    PGID: ${PGID} 
+    TZ: ${TIMEZONE}
+  restart: &restart
+    always
+
+services:
+  homarr:
+    image: ghcr.io/ajnart/homarr:latest
+    container_name: dashboard
+    environment: *env
+    volumes:
+      - ${BASE_DIR}/services/homarr/configs:/app/data/configs
+      - ${BASE_DIR}/services/homarr/data:/data
+      - ${BASE_DIR}/services/homarr/icons:/app/data/icons
+      - ${DOCKER_SOCK}:/var/run/docker.sock
+    ports:
+      - 80:7575
+    restart: *restart
+
+  plex:
+    image: lscr.io/linuxserver/plex:latest
+    container_name: plex
+    environment:
+      <<: *env
+      VERSION: docker
+    volumes:
+      - ${BASE_DIR}/services/plex:/config
+      - ${DATA_DIR}:/data/media
+    devices: 
+      - /dev/dri:/dev/dri
+    tmpfs:
+      - /transcode:size=6G
+    ports:
+      - 32400:32400/tcp
+    restart: *restart
+
+  sonarr:
+    image: ghcr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    volumes:
+        - ${BASE_DIR}/services/sonarr:/config
+        - ${DATA_DIR}/data:/data
+    environment: *env
+    restart: *restart
+    ports: 
+      - 8989:8989
+
+  radarr:
+    image: ghcr.io/linuxserver/radarr:latest
+    container_name: radarr
+    volumes:
+        - ${BASE_DIR}/services/radarr:/config
+        - ${DATA_DIR}/data:/data
+    environment: *env
+    restart: *restart
+    ports: 
+      - 7878:7878
+
+  wireguard:
+    image: lscr.io/linuxserver/wireguard:1.0.20210914-r4-ls59
+    container_name: wireguard
+    cap_add:
+      - NET_ADMIN
+    environment: *env
+    volumes:
+      - ${BASE_DIR}/services/wireguard:/config
+      - /lib/modules:/lib/modules
+    ports:
+      - 8112:8112 #deluge
+      - 9696:9696 #prowlarr
+      - 8191:8191 #flaresolverr
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    healthcheck:
+      test: ["CMD", "curl", "https://am.i.mullvad.net/connected"]
+      interval: 10s
+      timeout: 10s
+      start_period: 0s
+      retries: 6
+    restart: *restart
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    network_mode: service:wireguard
+    depends_on:
+      wireguard:
+        condition: service_healthy
+    environment: *env
+    volumes:
+      - ${BASE_DIR}/services/prowlarr:/config
+    restart: *restart
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    network_mode: service:wireguard
+    depends_on:
+      wireguard:
+        condition: service_healthy
+    environment:
+      <<: *env
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      LOG_HTML: "${LOG_HTML:-false}"
+      CAPTCHA_SOLVER: "${CAPTCHA_SOLVER:-none}"
+      HEADLESS: true
+      BROWSER_TIMEOUT: 40000
+      TEST_URL: "https://www.google.com"
+    restart: *restart
+
+  deluge:
+    image: lscr.io/linuxserver/deluge:latest
+    container_name: deluge
+    network_mode: service:wireguard
+    depends_on:
+      wireguard:
+        condition: service_healthy
+    environment:
+      <<: *env
+      DELUGE_LOGLEVEL: info #optional
+    volumes:
+      - ${BASE_DIR}/services/deluge:/config
+      - ${DATA_DIR}/data/downloads:/data/downloads
+    labels:
+       com.centurylinklabs.watchtower.depends-on: "wireguard"
+       com.centurylinklabs.watchtower.enable: "false"
+    restart: *restart
+
+  overseerr:
+    image: lscr.io/linuxserver/overseerr:latest
+    container_name: overseerr
+    environment: *env
+    volumes:
+      - ${BASE_DIR}/services/overseerr/config:/config
+    ports:
+      - 5055:5055
+    restart: *restart
+
+  watchtower:
+    container_name: watchtower
+    image: containrrr/watchtower
+    volumes:
+      - ${DOCKER_SOCK}:/var/run/docker.sock
+    environment:
+      <<: *env
+      WATCHTOWER_INCLUDE_RESTARTING: "true"
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_REMOVE_VOLUMES: "true"
+      WATCHTOWER_POLL_INTERVAL: 222222 # not to have on a periodic basis on the clock
+      WATCHTOWER_INCLUDE_STOPPED: "true"
+      WATCHTOWER_ROLLING_RESTART: "false"
+      WATCHTOWER_REVIVE_STOPPED: "true"
+    restart: *restart      
