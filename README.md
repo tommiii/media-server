@@ -32,8 +32,8 @@ This repository contains a `docker-compose` setup to manage a self-hosted media 
    DATA_DIR=/path/to/media
    DOCKER_SOCK=/var/run/docker.sock
 
-3. **Set Wireguard with Mullvad **:
-   Download the conf file from Mullvad, edit it with this:
+3. Set Wireguard with Mullvad:
+   Download the conf file from Mullvad and edit it with this:
 
    ```
    [Interface]
@@ -54,6 +54,9 @@ This repository contains a `docker-compose` setup to manage a self-hosted media 
    Save the file and place it {BASE_DIR}/services/wireguard/wg_confs
 
 
+# Nice to know
+
+- Services folder/structure has been created following https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Docker/ to guarantee Hardlinks and Instant Moves, with this config you might have to create the folders manually
 
 # Services Overview
 
