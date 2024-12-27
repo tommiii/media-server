@@ -32,6 +32,29 @@ This repository contains a `docker-compose` setup to manage a self-hosted media 
    DATA_DIR=/path/to/media
    DOCKER_SOCK=/var/run/docker.sock
 
+3. **Set Wireguard with Mullvad **:
+   Download the conf file from Mullvad, edit it with this:
+
+   ```
+   [Interface]
+   PrivateKey = <private key>
+   Address = 9.8.7.6/32
+   DNS = 8.8.8.8
+   PostUp = DROUTE=$(ip route | grep default | awk '{print $3}'); HOMENET=192.168.0.0/16; HOMENET2=10.0.0.0/8; HOMENET3=172.16.0.0/12; ip route add $HOMENET3 via $DROUTE;ip route add $HOMENET2 via $DROUTE; ip route add $HOMENET via $DROUTE;iptables -I OUTPUT -d $HOMENET -j ACCEPT;iptables -A OUTPUT -d $HOMENET2 -j ACCEPT; iptables -A OUTPUT -d $HOMENET3 -j ACCEPT;  iptables -A OUTPUT ! -o %i -m mark ! --mark $(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT
+   PreDown = DROUTE=$(ip route | grep default | awk '{print $3}'); HOMENET=192.168.0.0/16; HOMENET2=10.0.0.0/8; HOMENET3=172.16.0.0/12; ip route del $HOMENET3 via $DROUTE;ip route del $HOMENET2 via $DROUTE; ip route del $HOMENET via $DROUTE; iptables -D OUTPUT ! -o %i -m mark ! --mark $(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT; iptables -D OUTPUT -d $HOMENET -j ACCEPT; iptables -D OUTPUT -d $HOMENET2 -j ACCEPT; iptables -D OUTPUT -d $HOMENET3 -j ACCEPT
+   ```
+
+   if you're using Tailscale PostUp and PreDown should be:
+
+   ```
+   PostUp = DROUTE=$(ip route | grep default | awk '{print $3}'); HOMENET=192.168.0.0/16; HOMENET2=10.0.0.0/8; HOMENET3=172.16.0.0/12; HOMENET4=100.64.0.0/10; ip route add $HOMENET4 via $DROUTE; ip route add $HOMENET3 via $DROUTE; ip route add $HOMENET2 via $DROUTE; ip route add $HOMENET via $DROUTE; iptables -I OUTPUT -d $HOMENET -j ACCEPT; iptables -A OUTPUT -d $HOMENET2 -j ACCEPT; iptables -A OUTPUT -d $HOMENET3 -j ACCEPT; iptables -A OUTPUT -d $HOMENET4 -j ACCEPT; iptables -A OUTPUT ! -o %i -m mark ! --mark $(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT
+   PreDown = DROUTE=$(ip route | grep default | awk '{print $3}'); HOMENET=192.168.0.0/16; HOMENET2=10.0.0.0/8; HOMENET3=172.16.0.0/12; HOMENET4=100.64.0.0/10; ip route del $HOMENET4 via $DROUTE; ip route del $HOMENET3 via $DROUTE; ip route del $HOMENET2 via $DROUTE; ip route del $HOMENET via $DROUTE; iptables -D OUTPUT ! -o %i -m mark ! --mark $(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT;iptables -D OUTPUT -d $HOMENET -j ACCEPT;iptables -D OUTPUT -d $HOMENET2 -j ACCEPT;iptables -D OUTPUT -d $HOMENET3 -j ACCEPT;iptables -D OUTPUT -d $HOMENET4 -j ACCEPT
+   ```
+
+   Save the file and place it {BASE_DIR}/services/wireguard/wg_confs
+
+
+
 # Services Overview
 
 ## Homarr
