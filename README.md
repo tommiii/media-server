@@ -56,7 +56,23 @@ This repository contains a `docker-compose` setup to manage a self-hosted media 
 
 # Nice to know
 
-- Services folder/structure has been created following https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Docker/ to guarantee Hardlinks and Instant Moves, with this config you might have to create the folders manually
+## Hardlinks and Instant Moves
+
+Services folder/structure has been created following https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Docker/ to guarantee Hardlinks and Instant Moves, with this config you might have to create the folders manually
+
+## Transcoding with Plex 
+
+Plex container uses these lines to enable hardware transcoding
+
+```
+  volumes:
+      - /home/<user>/docker/plex/data:/config
+      - /dev/shm:/transcode #transcodes in RAM
+      - /home/<user>/media/data/media:/data/media #maps docker volume to external media on machine 
+    devices:
+      - /dev/dri:/dev/dri #allows hardware transcoding on intel GPU
+
+```
 
 # Services Overview
 
