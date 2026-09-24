@@ -24,6 +24,7 @@ Prowlarr, FlareSolverr, Sonarr, Radarr and qBittorrent share Gluetun's network n
 - `/dev/net/tun` on the host (`ls /dev/net/tun`; if missing: `sudo modprobe tun`).
 - A **fixed LAN IP** for the server (set a DHCP reservation on your router). The UIs are bound to that address; if it changes, the containers will not start.
 - A [Mullvad](https://mullvad.net) account.
+- `python3` with PyYAML for the setup script: `sudo apt install python3-yaml`.
 - Optional: an Intel GPU (`/dev/dri`) for Plex hardware transcoding (needs Plex Pass). No GPU? Remove the `devices:` block of `plex` in `compose.yml`.
 
 ## 2. Get the code and create `.env`
@@ -44,6 +45,8 @@ Edit `.env`:
 | `DATA_DIR` | where downloads and media live (can equal `BASE_DIR`) |
 | `LAN_IP` | the server's LAN address, e.g. `192.168.1.10` |
 | `LAN_SUBNETS` | subnets allowed to reach the UIs, e.g. `192.168.1.0/24` (find yours with `ip -4 route`). Add `100.64.0.0/10` if you use Tailscale |
+| `ARR_USERNAME` / `ARR_PASSWORD` | login you choose for the Sonarr, Radarr and Prowlarr web UIs (set by `apply_arr_config.py`) |
+| `QBITTORRENT_USERNAME` / `QBITTORRENT_PASSWORD` | login you choose for the qBittorrent web UI (also set by the script). Keep the username `admin` if you do not care |
 | `HOMEPAGE_AUTH_PASSWORD` | password to open the dashboard |
 | `HOMEPAGE_AUTH_SECRET` | random string that signs the session cookie: `openssl rand -base64 32` |
 | `PLEX_CLAIM` | token from https://www.plex.tv/claim/ (valid 4 minutes, fill it right before the first start) |
@@ -118,9 +121,38 @@ If `gluetun` is not healthy, see [Troubleshooting](#troubleshooting).
 
 ## 6. Configure the apps
 
-Order matters: the later apps need keys/passwords from the earlier ones. In the UIs, use **`localhost`** for services behind the VPN (they share a network namespace) and the ports shown below.
+Everything except your indexers and Plex is configured **from a file**: `arr.yml` describes the desired state and `./apply_arr_config.py` applies it to qBittorrent, Sonarr, Radarr and Prowlarr. Sections 6.1–6.3 below describe the same settings by hand, for reference or if you prefer the UIs. What is always manual: **adding your indexers** (6.2, step 3) and Plex (6.4).
 
-### 6.1 qBittorrent — `http://<LAN_IP>:8080`
+### 6.0 Automatic setup (recommended)
+
+1. In `.env` choose the logins (see the table in step 2): `ARR_USERNAME`, `ARR_PASSWORD`, `QBITTORRENT_USERNAME`, `QBITTORRENT_PASSWORD`. Leave the API key variables empty.
+2. Make sure everything is up (`docker compose ps`) and each app has been started at least once (that is when it creates its API key).
+3. Run:
+
+   ```bash
+   ./apply_arr_config.py --check    # what it would change, nothing is written
+   ./apply_arr_config.py
+   ```
+
+What it does, in this order (safe to run again: it only changes what differs):
+
+| Step | Effect |
+|---|---|
+| API keys | Reads the Sonarr, Radarr and Prowlarr keys from their `config.xml` and writes them into `.env` if empty (Homepage and Recyclarr use them) |
+| qBittorrent | Signs in (on the first start with the temporary password from `docker logs`), sets your web UI login, `save_path=/data/downloads`, UPnP off, network interface `tun0`, and generates an API key into `.env` |
+| Sonarr / Radarr | Forms login (always required), hardlinks on, root folders `/data/media/tv` / `/data/media/movies`, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), removes the old Deluge client |
+| Prowlarr | Forms login, FlareSolverr proxy with tag `flaresolverr`, links to Sonarr and Radarr (full sync) |
+
+To change a setting, edit `arr.yml` and run the script again. Passwords and keys stay in `.env`: `arr.yml` only contains `${VAR}` placeholders. If it reports a problem it says what to fix and carries on with the rest; the exit code is 1 if anything failed. If a login does not seem to apply, `docker compose restart sonarr radarr prowlarr`.
+
+Notes:
+- **First qBittorrent start:** if you did not set `QBITTORRENT_PASSWORD` yet, the script signs in with the temporary password and asks you to set one in `.env` and run again (it does not create the download clients until then).
+- **Changing a password later:** the apps hide stored passwords and keys, so the script cannot compare them. Change it in `.env` and run `./apply_arr_config.py --force`.
+- Then continue with the indexers (6.2, step 3), and Plex (6.4).
+
+### 6.1 qBittorrent by hand — `http://<LAN_IP>:8080`
+
+*(done by `apply_arr_config.py`)*
 
 1. Get the temporary password: `docker logs qbittorrent 2>&1 | grep -i "temporary password"`. Log in as `admin`.
 2. **Tools → Options → Web UI**: set your own username and password.
@@ -129,14 +161,18 @@ Order matters: the later apps need keys/passwords from the earlier ones. In the 
 5. **Advanced → Network Interface**: select **`tun0`** (the VPN interface inside Gluetun, also used for WireGuard). This is a second layer on top of the kill switch: qBittorrent will refuse to use any other interface.
 6. Save.
 
-### 6.2 Prowlarr — `http://<LAN_IP>:9696`
+### 6.2 Prowlarr by hand — `http://<LAN_IP>:9696`
+
+*(login and FlareSolverr are done by the script; adding indexers is not)*
 
 1. On first login set authentication to *Forms* and choose a username/password (**Settings → General → Authentication**, *Required*).
 2. **Settings → Indexers → +** *FlareSolverr*: Host `http://localhost:8191`, Tags `flaresolverr`. Give that tag to the indexers that need Cloudflare solving.
 3. **Indexers → Add Indexer**: add your indexers.
 4. **Settings → Apps**: add Sonarr and Radarr later, after step 6.3 (you need their API keys).
 
-### 6.3 Sonarr — `http://<LAN_IP>:8989` and Radarr — `http://<LAN_IP>:7878`
+### 6.3 Sonarr and Radarr by hand — `http://<LAN_IP>:8989`, `http://<LAN_IP>:7878`
+
+*(done by `apply_arr_config.py`)*
 
 For each one:
 
@@ -174,7 +210,7 @@ Plex needs write access only to its own config, so the media is mounted `:ro`. I
 
 The dashboard is configured **as code**: `homepage/settings.yaml`, `services.yaml` and `widgets.yaml` live in this repo and are mounted read-only, so the container cannot change them; a change is a `git commit` plus `docker compose restart homepage`. Homepage also insists on a few other, empty files (bookmarks, docker, ...): it creates them itself in `$BASE_DIR/services/homepage`, outside the repo. It has no Docker socket. You log in with `HOMEPAGE_AUTH_PASSWORD`.
 
-The links and status dots work immediately. To turn on the widgets (download queue, Plex streams, ...), put the credentials in `.env` and recreate the container:
+The links and status dots work immediately. The widgets (download queue, Plex streams, ...) need the credentials below in `.env`. `./apply_arr_config.py` (6.0) has already filled the first four; only `PLEX_TOKEN` is manual. Then recreate the container:
 
 | `.env` variable | Where to find it |
 |---|---|
@@ -190,7 +226,7 @@ Add or reorder services in `homepage/services.yaml`. Anything written as `{{HOME
 
 ### 6.6 Recyclarr and download safety (do this once the keys are in `.env`)
 
-Both need the Sonarr/Radarr (and qBittorrent) API keys from 6.5. Recyclarr does not sync when it starts: it only runs at its schedule (daily at 00:00 UTC), so **run the first sync by hand** as below.
+Both need the Sonarr/Radarr (and qBittorrent) API keys, which `apply_arr_config.py` (6.0) puts in `.env`. Recyclarr does not sync when it starts: it only runs at its schedule (daily at 00:00 UTC), so **run the first sync by hand** as below.
 
 ```bash
 docker compose up -d                                        # picks up the new keys (homepage, recyclarr)
@@ -255,6 +291,7 @@ docker compose ps                    # status
 docker compose logs -f gluetun       # VPN logs
 ./check_vpn_connection.sh            # is everything on the VPN?
 ./audit_media.sh                     # is everything in downloads/media really video?
+./apply_arr_config.py --check        # is the *arr setup still what arr.yml says?
 ./apply_download_safety.py           # re-apply file filters (after adding indexers)
 ./restart_services.sh                # pull + recreate everything
 ```
@@ -312,6 +349,10 @@ Something broke? `git revert <merge commit>`, then the same command.
 | Sonarr/Radarr metadata (TVDB/TMDB) errors | Rarely, a service blocks VPN IPs. Try another `VPN_COUNTRIES`; as a last resort Sonarr/Radarr can be moved out of the VPN (this lowers protection, so keep indexers only in Prowlarr) |
 | Homepage: `Host validation failed` | The address you type in the browser must be in `HOMEPAGE_ALLOWED_HOSTS` (default: `LAN_IP`). Add other names with `HOMEPAGE_ALLOWED_HOSTS=192.168.1.10,server.tailnet.ts.net` in `.env` |
 | Homepage widgets show errors or no numbers | The matching key in `.env` is empty or wrong (6.5); run `docker compose up -d homepage` after editing `.env` |
+| `apply_arr_config.py`: `PyYAML is required` | `sudo apt install python3-yaml` |
+| `apply_arr_config.py`: `cannot sign in` to qBittorrent | `QBITTORRENT_USERNAME`/`QBITTORRENT_PASSWORD` in `.env` must be the web UI credentials. If it never had a password, `docker compose restart qbittorrent` gives a new temporary one (the script picks it up from `docker logs`). Too many failed logins ban the address for a while: a restart clears it |
+| `apply_arr_config.py`: `no API key for sonarr` | The app has not started yet or its `config.xml` is not in `$BASE_DIR/services/<app>/`. Check `docker compose ps` and that `BASE_DIR` in `.env` is an absolute path |
+| `apply_arr_config.py`: `root folder ...: Folder does not exist` | Create it on the host (step 3) and check ownership: `PUID:PGID` must own `$DATA_DIR/data` |
 | `recyclarr sync` reports `api_key`/401/connection errors | `SONARR_API_KEY` / `RADARR_API_KEY` are empty or wrong in `.env`; fix and `docker compose up -d recyclarr` |
 | `apply_download_safety.py`: `skipped ... is empty` or connection errors | Fill the API keys in `.env`; the script talks to `http://<LAN_IP>:<port>`, so run it from a machine in `LAN_SUBNETS` (the server itself is fine) |
 | A release disappeared / "Caution: Found executable" in Activity | The protection worked: the release was blocklisted and another one is tried |
