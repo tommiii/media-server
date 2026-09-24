@@ -382,8 +382,8 @@ Two torrents for the same episodes or movie can be running at once, for three re
 How it decides, so that it never removes the wrong thing:
 
 - It looks only at **unfinished** torrents. Each one becomes the set of episodes (or the movie) it will deliver: from the Sonarr/Radarr queue for what they grabbed, and from Sonarr/Radarr's own title parser for what you added by hand.
-- Downloads are ranked by **quality in the title's quality profile (the ladder)**, then by number of episodes, then by progress. Going down the list, a download is kept if it brings at least one episode the better ones do not; otherwise it is a duplicate. A season pack is never removed because of one episode, and nothing is removed unless better downloads already deliver *every* episode it would.
-- A duplicate that is already **90 % done is left to finish** (`--min-progress`).
+- Downloads are ranked: **nearly finished ones first** (`--min-progress`, 90 % by default: with upgrades off, the first to finish is the one that gets imported), then by **quality in the title's quality profile (the ladder)**, then by number of episodes, then by progress. Going down the list, a download is kept if it brings at least one episode the better ones do not; otherwise it is a duplicate. A season pack is never removed because of one episode, and nothing is removed unless better downloads already deliver *every* episode it would.
+- If two overlapping downloads are *both* at least 90 % done, both are left to finish.
 - Removal: Sonarr/Radarr downloads go through their queue (no blocklist, no new search); manual torrents are deleted from qBittorrent with their files. **`--keep-manual` never touches manual torrents** (set `DEDUPE_ARGS=--keep-manual` in `.env` and re-run `./scripts/cron.sh install`).
 
 Try it without changing anything, whenever you like:

@@ -10,8 +10,8 @@ How "the same" is decided
   Every unfinished torrent is turned into the set of episodes (or the movie) it will deliver:
   - torrents grabbed by Sonarr/Radarr: from their queue
   - torrents added by hand: Sonarr/Radarr's own title parser (/parse) recognises the series/episodes or the movie
-  Downloads are then ranked: quality rank in the title's quality profile (the ladder), then more episodes,
-  then more progress. Going down that list, a download is kept if it brings at least one episode that the
+  Downloads are then ranked: nearly finished ones first (upgrades are off, the first to finish is imported),
+  then quality rank in the title's quality profile (the ladder), then more episodes, then more progress. Going down that list, a download is kept if it brings at least one episode that the
   better ones do not already bring; otherwise it is a duplicate. So a season pack is never removed because of
   a single episode, and nothing is removed unless something better delivers every episode it would.
 
@@ -155,7 +155,10 @@ def main():
                 q = quality_id((parsed.get("parsedMovieInfo") or {}).get("quality"))
                 it["rank"] = ranks["movie"].get(parsed["movie"].get("qualityProfileId"), {}).get(q, -1)
 
-    ordered = sorted(items.values(), key=lambda i: (-i["rank"], -len(i["keys"]), -i["progress"], i["manual"]))
+    # A download that is nearly done wins over a better-ranked one that has barely started: upgrades are off, so
+    # the first to finish is the one that gets imported. Then the ladder, then more episodes, then progress.
+    ordered = sorted(items.values(), key=lambda i: (i["progress"] < args.min_progress, -i["rank"], -len(i["keys"]),
+                                                    -i["progress"], i["manual"]))
     covered, duplicates = set(), []
     for it in ordered:
         if it["keys"] and it["keys"] <= covered:
@@ -171,7 +174,7 @@ def main():
         origin = "added by hand" if it["manual"] else f"grabbed by {'Sonarr' if it['kind'] == 'tv' else 'Radarr'}"
         better = next((o for o in ordered[:ordered.index(it)] if o["keys"] & it["keys"]), None)
         line = f"  {it['name'][:80]}  ({origin}, {it['progress'] * 100:.0f} %)\n      duplicate of: {(better['name'] if better else '?')[:80]}"
-        if it["progress"] >= args.min_progress:
+        if it["progress"] >= args.min_progress:  # two nearly finished copies: both stay, the extra one is cleaned up later
             print(f"KEEP  {line}\n      (already {it['progress'] * 100:.0f} % done: let it finish)")
             continue
         print(("REMOVE" if args.apply else "WOULD REMOVE") + line)
