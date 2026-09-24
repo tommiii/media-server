@@ -126,7 +126,7 @@ Order matters: the later apps need keys/passwords from the earlier ones. In the 
 2. **Tools → Options → Web UI**: set your own username and password.
 3. **Downloads**: *Default Save Path* = `/data/downloads`.
 4. **Connection**: untick *Use UPnP / NAT-PMP port forwarding* (useless behind Mullvad).
-5. **Advanced → Network Interface**: select **`wg0`** (Gluetun's WireGuard interface). This is a second layer on top of the kill switch: qBittorrent will refuse to use any other interface.
+5. **Advanced → Network Interface**: select **`tun0`** (the VPN interface inside Gluetun, also used for WireGuard). This is a second layer on top of the kill switch: qBittorrent will refuse to use any other interface.
 6. Save.
 
 ### 6.2 Prowlarr — `http://<LAN_IP>:9696`
@@ -287,7 +287,7 @@ Something broke? `git revert <merge commit>`, then the same command.
 ## Security model
 
 - Only Plex and Homepage are outside the VPN. Everything that searches or downloads shares Gluetun's network namespace and its firewall (kill switch, DNS over TLS through the tunnel).
-- qBittorrent is also bound to `wg0`.
+- qBittorrent is also bound to `tun0`.
 - Nothing is published on `0.0.0.0` unless you set `LAN_IP=0.0.0.0`. This matters because Docker-published ports bypass ufw/firewalld.
 - FlareSolverr (no authentication) is not published at all.
 - No container has the Docker socket.
