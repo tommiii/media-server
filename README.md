@@ -62,7 +62,7 @@ If Docker creates the folders itself they end up owned by root and the apps cann
 ```bash
 set -a; . ./.env; set +a
 mkdir -p "$BASE_DIR"/services/{gluetun,prowlarr,sonarr,radarr,qbittorrent,recyclarr,homepage,plex}
-mkdir -p "$DATA_DIR"/data/{downloads,media/{tv-show,movies}}
+mkdir -p "$DATA_DIR"/data/{downloads,media/{tv-shows,movies}}
 sudo chown -R "$PUID:$PGID" "$BASE_DIR/services" "$DATA_DIR/data"
 ```
 
@@ -72,7 +72,7 @@ Resulting layout (follows [TRaSH Guides](https://trash-guides.info/File-and-Fold
 $DATA_DIR/data
 ├── downloads      <- qBittorrent writes here (it cannot see anything else)
 └── media
-    ├── tv-show    <- Sonarr root folder
+    ├── tv-shows   <- Sonarr root folder
     └── movies     <- Radarr root folder
 ```
 
@@ -194,7 +194,7 @@ Notes:
 For each one:
 
 1. Set authentication (*Forms*, *Required*) on first login.
-2. **Settings → Media Management → Root Folders**: Sonarr `/data/media/tv-show`, Radarr `/data/media/movies`. Keep *Use Hardlinks instead of Copy* enabled.
+2. **Settings → Media Management → Root Folders**: Sonarr `/data/media/tv-shows`, Radarr `/data/media/movies`. Keep *Use Hardlinks instead of Copy* enabled.
 3. **Settings → Download Clients → + → qBittorrent**:
    - Host `localhost`, Port `8080`
    - Username/password from step 6.1
@@ -217,7 +217,7 @@ paste each API key, *Test*, *Save*. Prowlarr pushes the indexers to both apps.
 
 1. Because of `PLEX_CLAIM` the server is attached to your Plex account automatically. If you skipped it (or it expired), run `docker compose up -d --force-recreate plex` with a fresh token.
 2. Add libraries. Plex mounts `$DATA_DIR` read-only as `/data/media`, so the folders are:
-   - TV: `/data/media/data/media/tv-show`
+   - TV: `/data/media/data/media/tv-shows`
    - Movies: `/data/media/data/media/movies`
 3. **Settings → Network**: *Custom server access URLs* = `http://<LAN_IP>:32400`; *LAN Networks* = your subnet (e.g. `192.168.1.0/24`). Plex runs in bridge mode, so without this, clients on your own network can be treated as remote.
 4. Hardware transcoding (Plex Pass): **Settings → Transcoder → Use hardware acceleration**.

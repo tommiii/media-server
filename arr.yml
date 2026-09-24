@@ -21,7 +21,7 @@ qbittorrent:
 sonarr:
   hardlinks: true                    # import by hardlink: instant, no extra disk space
   root_folders:
-    - /data/media/tv-show
+    - /data/media/tv-shows
   download_client:
     name: qBittorrent
     host: localhost
@@ -81,4 +81,4 @@ plex:
     PublishServerOnPlexOnlineKey: false         # Remote Access off: you use Tailscale
   libraries:                         # Plex mounts $DATA_DIR at /data/media, hence the doubled "data/media"
     - {name: Movies, type: movie, path: /data/media/data/media/movies}
-    - {name: TV Shows, type: show, path: /data/media/data/media/tv-show}
+    - {name: TV Shows, type: show, path: /data/media/data/media/tv-shows}
