@@ -1,108 +1,97 @@
 x-common: &common
   environment: &env
     PUID: ${PUID}
-    PGID: ${PGID} 
+    PGID: ${PGID}
     TZ: ${TIMEZONE}
   restart: &restart
-    always
+    unless-stopped
+
+# Every container: no privilege escalation, no capabilities except what init needs.
+# linuxserver.io images start as root to chown /config and then drop to PUID/PGID (s6-overlay).
+# If a container fails to start after this change, drop `cap_drop` for that service first.
+x-hardened: &hardened
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+x-init-caps: &init-caps
+  - CHOWN
+  - DAC_OVERRIDE
+  - FOWNER
+  - KILL
+  - SETGID
+  - SETUID
+
+# Anything that talks to the internet on behalf of the downloader lives inside gluetun's
+# network namespace: no interface other than the VPN tunnel exists for it, and gluetun's
+# firewall drops everything that is not tunnel traffic (kill switch).
+# `restart: true` recreates the dependent whenever compose restarts gluetun.
+x-vpn: &vpn
+  network_mode: service:gluetun
+  depends_on:
+    gluetun:
+      condition: service_healthy
+      restart: true
 
 services:
-  homarr:
-    image: ghcr.io/ajnart/homarr:latest
-    container_name: dashboard
-    environment: *env
-    volumes:
-      - ${BASE_DIR}/services/homarr/configs:/app/data/configs
-      - ${BASE_DIR}/services/homarr/data:/data
-      - ${BASE_DIR}/services/homarr/icons:/app/data/icons
-      - ${DOCKER_SOCK}:/var/run/docker.sock
-    ports:
-      - 80:7575
-    restart: *restart
-
-  plex:
-    image: lscr.io/linuxserver/plex:latest
-    container_name: plex
-    environment:
-      <<: *env
-      VERSION: docker
-    volumes:
-      - ${BASE_DIR}/services/plex:/config
-      - ${DATA_DIR}:/data/media
-    devices: 
-      - /dev/dri:/dev/dri
-    tmpfs:
-      - /transcode:size=6G
-    ports:
-      - 32400:32400/tcp
-    restart: *restart
-
-  sonarr:
-    image: ghcr.io/linuxserver/sonarr:latest
-    container_name: sonarr
-    volumes:
-        - ${BASE_DIR}/services/sonarr:/config
-        - ${DATA_DIR}/data:/data
-    environment: *env
-    restart: *restart
-    ports: 
-      - 8989:8989
-
-  radarr:
-    image: ghcr.io/linuxserver/radarr:latest
-    container_name: radarr
-    volumes:
-        - ${BASE_DIR}/services/radarr:/config
-        - ${DATA_DIR}/data:/data
-    environment: *env
-    restart: *restart
-    ports: 
-      - 7878:7878
-
-  wireguard:
-    image: lscr.io/linuxserver/wireguard:1.0.20210914-r4-ls59
-    container_name: wireguard
+  # ---------------------------------------------------------------- VPN
+  gluetun:
+    image: qmcgaw/gluetun:v3.41.3
+    container_name: gluetun
+    security_opt:
+      - no-new-privileges:true
     cap_add:
       - NET_ADMIN
-    environment: *env
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      TZ: ${TIMEZONE}
+      VPN_SERVICE_PROVIDER: mullvad
+      VPN_TYPE: wireguard
+      WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES:?set WIREGUARD_ADDRESSES in .env}
+      # the private key is read from /run/secrets/wireguard_private_key (see `secrets` below)
+      SERVER_COUNTRIES: ${VPN_COUNTRIES:-Netherlands}
+      OWNED_ONLY: "yes"
+      # LAN clients reach the UIs below; replies must not go through the tunnel
+      FIREWALL_OUTBOUND_SUBNETS: ${LAN_SUBNETS:?set LAN_SUBNETS in .env}
+      FIREWALL_INPUT_PORTS: 8989,7878,9696,8080
+      # DNS over TLS through the tunnel (gluetun default), never the host/Docker resolver
+      DNS_KEEP_NAMESERVER: "off"
+      # do not ask third-party "what is my IP" APIs
+      PUBLICIP_ENABLED: "off"
+    secrets:
+      - wireguard_private_key
     volumes:
-      - ${BASE_DIR}/services/wireguard:/config
-      - /lib/modules:/lib/modules
+      - ${BASE_DIR}/services/gluetun:/gluetun
     ports:
-      - 8112:8112 #deluge
-      - 9696:9696 #prowlarr
-      - 8191:8191 #flaresolverr
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
-    healthcheck:
-      test: ["CMD", "curl", "https://am.i.mullvad.net/connected"]
-      interval: 10s
-      timeout: 10s
-      start_period: 0s
-      retries: 6
+      # Only the UIs, only on the LAN address. 8191 (flaresolverr) is intentionally NOT published:
+      # prowlarr reaches it on localhost:8191.
+      - ${LAN_IP:?set LAN_IP in .env}:8989:8989 # sonarr
+      - ${LAN_IP}:7878:7878 # radarr
+      - ${LAN_IP}:9696:9696 # prowlarr
+      - ${LAN_IP}:8080:8080 # qbittorrent
+    networks:
+      - vpn_net
     restart: *restart
-    labels:
-      com.centurylinklabs.watchtower.enable: "false"
 
+  # Arr stack + torrent client: same namespace, so they talk over localhost
+  # (prowlarr -> sonarr/radarr: http://localhost:8989 / :7878, sonarr/radarr -> qbittorrent: localhost:8080,
+  #  sonarr/radarr -> prowlarr: http://localhost:9696, prowlarr -> flaresolverr: http://localhost:8191)
   prowlarr:
-    image: lscr.io/linuxserver/prowlarr:latest
+    <<: [*hardened, *vpn]
+    image: lscr.io/linuxserver/prowlarr:2.6.5.5623-ls162
     container_name: prowlarr
-    network_mode: service:wireguard
-    depends_on:
-      wireguard:
-        condition: service_healthy
+    cap_add: *init-caps
     environment: *env
     volumes:
       - ${BASE_DIR}/services/prowlarr:/config
     restart: *restart
 
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
+    <<: [*hardened, *vpn]
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.2
     container_name: flaresolverr
-    network_mode: service:wireguard
-    depends_on:
-      wireguard:
-        condition: service_healthy
     environment:
       <<: *env
       LOG_LEVEL: "${LOG_LEVEL:-info}"
@@ -113,46 +102,134 @@ services:
       TEST_URL: "https://www.google.com"
     restart: *restart
 
-  deluge:
-    image: lscr.io/linuxserver/deluge:latest
-    container_name: deluge
-    network_mode: service:wireguard
-    depends_on:
-      wireguard:
-        condition: service_healthy
-    environment:
-      <<: *env
-      DELUGE_LOGLEVEL: info #optional
-    volumes:
-      - ${BASE_DIR}/services/deluge:/config
-      - ${DATA_DIR}/data/downloads:/data/downloads
-    labels:
-       com.centurylinklabs.watchtower.depends-on: "wireguard"
-       com.centurylinklabs.watchtower.enable: "false"
-    restart: *restart
-
-  overseerr:
-    image: lscr.io/linuxserver/overseerr:latest
-    container_name: overseerr
+  sonarr:
+    <<: [*hardened, *vpn]
+    image: lscr.io/linuxserver/sonarr:4.0.20.3014-ls325
+    container_name: sonarr
+    cap_add: *init-caps
     environment: *env
     volumes:
-      - ${BASE_DIR}/services/overseerr/config:/config
-    ports:
-      - 5055:5055
+      - ${BASE_DIR}/services/sonarr:/config
+      - ${DATA_DIR}/data:/data
     restart: *restart
 
-  watchtower:
-    container_name: watchtower
-    image: containrrr/watchtower
+  radarr:
+    <<: [*hardened, *vpn]
+    image: lscr.io/linuxserver/radarr:6.4.4.10685-ls318
+    container_name: radarr
+    cap_add: *init-caps
+    environment: *env
     volumes:
-      - ${DOCKER_SOCK}:/var/run/docker.sock
+      - ${BASE_DIR}/services/radarr:/config
+      - ${DATA_DIR}/data:/data
+    restart: *restart
+
+  qbittorrent:
+    <<: [*hardened, *vpn]
+    image: lscr.io/linuxserver/qbittorrent:5.2.3_v2.0.14-ls477
+    container_name: qbittorrent
+    cap_add: *init-caps
     environment:
       <<: *env
-      WATCHTOWER_INCLUDE_RESTARTING: "true"
-      WATCHTOWER_CLEANUP: "true"
-      WATCHTOWER_REMOVE_VOLUMES: "true"
-      WATCHTOWER_POLL_INTERVAL: 222222 # not to have on a periodic basis on the clock
-      WATCHTOWER_INCLUDE_STOPPED: "true"
-      WATCHTOWER_ROLLING_RESTART: "false"
-      WATCHTOWER_REVIVE_STOPPED: "true"
-    restart: *restart      
+      WEBUI_PORT: 8080
+    volumes:
+      - ${BASE_DIR}/services/qbittorrent:/config
+      # downloads only: qbittorrent cannot see the rest of the library
+      - ${DATA_DIR}/data/downloads:/data/downloads
+    restart: *restart
+
+  # Keeps Sonarr/Radarr quality profiles + custom formats in sync with TRaSH Guides.
+  # Config lives in ./recyclarr/configs (read-only); state/cache in $BASE_DIR/services/recyclarr.
+  # Rootless image: runs as PUID:PGID, no capabilities needed, read-only root filesystem.
+  recyclarr:
+    <<: [*hardened, *vpn]
+    image: ghcr.io/recyclarr/recyclarr:8.7.2
+    container_name: recyclarr
+    user: ${PUID}:${PGID}
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      gluetun:
+        condition: service_healthy
+        restart: true
+      sonarr:
+        condition: service_started
+      radarr:
+        condition: service_started
+    environment:
+      TZ: ${TIMEZONE}
+      CRON_SCHEDULE: "@daily"
+      SONARR_API_KEY: ${SONARR_API_KEY:-}
+      RADARR_API_KEY: ${RADARR_API_KEY:-}
+    volumes:
+      - ${BASE_DIR}/services/recyclarr:/config
+      - ./recyclarr/configs:/config/configs:ro
+    restart: *restart
+
+  # ---------------------------------------------------------------- outside the VPN
+  plex:
+    <<: *hardened
+    image: lscr.io/linuxserver/plex:1.43.4.10903-e5521bd8c-ls325
+    container_name: plex
+    cap_add: *init-caps
+    environment:
+      <<: *env
+      VERSION: docker
+      PLEX_CLAIM: ${PLEX_CLAIM:-}
+    volumes:
+      - ${BASE_DIR}/services/plex:/config
+      - ${DATA_DIR}:/data/media:ro
+    devices:
+      - /dev/dri:/dev/dri
+    tmpfs:
+      - /transcode:size=6G
+    ports:
+      - ${LAN_IP}:32400:32400/tcp
+    networks:
+      - plex_net
+    restart: *restart
+
+  # Dashboard: the three config files that matter live in this repo (./homepage/*.yaml, mounted read-only),
+  # no Docker socket. Homepage insists on finding a few other (empty) files; it creates them itself in the
+  # writable $BASE_DIR/services/homepage, outside the repo.
+  # Sits on vpn_net + plex_net so widgets can call gluetun:<port> and plex:32400 directly.
+  homepage:
+    <<: *hardened
+    image: ghcr.io/gethomepage/homepage:v2.4.0
+    container_name: homepage
+    cap_add: *init-caps
+    environment:
+      <<: *env
+      LOG_TARGETS: stdout
+      HOMEPAGE_ALLOWED_HOSTS: ${HOMEPAGE_ALLOWED_HOSTS:-${LAN_IP}}
+      HOMEPAGE_AUTH_ENABLED: "true"
+      HOMEPAGE_EXTERNAL_URL: http://${LAN_IP}
+      HOMEPAGE_AUTH_SECRET: ${HOMEPAGE_AUTH_SECRET:?set HOMEPAGE_AUTH_SECRET in .env (openssl rand -base64 32)}
+      HOMEPAGE_AUTH_PASSWORD: ${HOMEPAGE_AUTH_PASSWORD:?set HOMEPAGE_AUTH_PASSWORD in .env}
+      # substituted into ./homepage/*.yaml as {{HOMEPAGE_VAR_...}}
+      HOMEPAGE_VAR_LAN_IP: ${LAN_IP}
+      HOMEPAGE_VAR_SONARR_KEY: ${SONARR_API_KEY:-}
+      HOMEPAGE_VAR_RADARR_KEY: ${RADARR_API_KEY:-}
+      HOMEPAGE_VAR_PROWLARR_KEY: ${PROWLARR_API_KEY:-}
+      HOMEPAGE_VAR_QBITTORRENT_KEY: ${QBITTORRENT_API_KEY:-}
+      HOMEPAGE_VAR_PLEX_TOKEN: ${PLEX_TOKEN:-}
+    volumes:
+      - ${BASE_DIR}/services/homepage:/app/config
+      - ./homepage/settings.yaml:/app/config/settings.yaml:ro
+      - ./homepage/services.yaml:/app/config/services.yaml:ro
+      - ./homepage/widgets.yaml:/app/config/widgets.yaml:ro
+    ports:
+      - ${LAN_IP}:80:3000
+    networks:
+      - vpn_net
+      - plex_net
+    restart: *restart
+
+networks:
+  vpn_net:
+  plex_net:
+
+secrets:
+  wireguard_private_key:
+    file: ${BASE_DIR}/services/gluetun/wireguard_private_key
