@@ -65,6 +65,9 @@ prowlarr:
     radarr:
       prowlarr_url: http://localhost:9696
       url: http://localhost:7878
+  # Indexers whose site definition was removed upstream cannot work any more and keep Prowlarr's health warning
+  # "have no definition". true = delete them on the next run. false = leave them alone.
+  remove_orphaned_indexers: true
   # Public trackers, as a starting point: edit freely. `definition` is the name in Prowlarr's indexer list.
   # Private trackers need credentials: put them in .env and reference them, e.g.
   #   - definition: mytracker

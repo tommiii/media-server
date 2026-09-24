@@ -50,6 +50,8 @@ OPAQUE = ("password", "apiKey")  # the API returns these masked, so they cannot 
 changes = 0
 problems = 0
 PENDING_TAGS = set()
+# Prowlarr lists ~500 definitions. Below this many, the list is probably incomplete (update failed): never delete then.
+MIN_DEFINITIONS_FOR_ORPHAN_CHECK = 50
 
 
 class ApiError(Exception):
@@ -425,12 +427,36 @@ def ensure_tag(base, headers, label):
     return tag["id"]
 
 
-def prowlarr_indexers(base, headers, items):
-    if not items:
-        return
-    existing = {i.get("definitionName"): i for i in request("GET", f"{base}/indexer", headers)}
+def remove_orphaned_indexers(base, headers, indexers, schema):
+    """Delete indexers whose definition no longer exists (Prowlarr reports them as 'have no definition and will not work')."""
+    known = {t.get("definitionName") for t in schema if t.get("implementation") == "Cardigann"}
+    if len(known) < MIN_DEFINITIONS_FOR_ORPHAN_CHECK:
+        print(f"  orphaned indexers: not checked (Prowlarr knows only {len(known)} definitions, the list looks incomplete)")
+        return indexers
+    kept = []
+    for indexer in indexers:
+        if indexer.get("implementation") == "Cardigann" and indexer.get("definitionName") not in known:
+            note(f"remove indexer '{indexer['name']}' (its definition no longer exists)")
+            if not CHECK:
+                try:
+                    request("DELETE", f"{base}/indexer/{indexer['id']}", headers)
+                except ApiError as error:
+                    problem(f"indexer {indexer['name']}: {error}")
+        else:
+            kept.append(indexer)
+    return kept
+
+
+def prowlarr_indexers(base, headers, items, drop_orphans=False):
+    indexers = request("GET", f"{base}/indexer", headers)
     schema = None
     profile_id = None
+    if drop_orphans:
+        schema = request("GET", f"{base}/indexer/schema", headers)
+        indexers = remove_orphaned_indexers(base, headers, indexers, schema)
+    if not items:
+        return
+    existing = {i.get("definitionName"): i for i in indexers}
     for item in items:
         spec = {"definition": item} if isinstance(item, str) else dict(item)
         definition = spec["definition"]
@@ -450,6 +476,7 @@ def prowlarr_indexers(base, headers, items):
             continue
         if schema is None:
             schema = request("GET", f"{base}/indexer/schema", headers)
+        if profile_id is None:
             profile_id = request("GET", f"{base}/appprofile", headers)[0]["id"]
         template = next((t for t in schema if t.get("definitionName") == definition), None)
         if template is None:
@@ -480,7 +507,7 @@ def prowlarr(host, key, cfg, auth, keys):
         tag_id = ensure_tag(base, headers, proxy.get("tag", "flaresolverr"))
         upsert_provider(base, headers, "indexerproxy", "FlareSolverr", "FlareSolverr", {"host": proxy["host"]}, tags=[tag_id])
 
-    prowlarr_indexers(base, headers, cfg.get("indexers"))
+    prowlarr_indexers(base, headers, cfg.get("indexers"), cfg.get("remove_orphaned_indexers", False))
 
     for app, settings in (cfg.get("apps") or {}).items():
         if not keys.get(app):
