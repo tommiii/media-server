@@ -27,6 +27,9 @@ sonarr:
     host: localhost
     port: 8080
     category: tv
+  quality_profile:                   # created by Recyclarr (recyclarr/configs/media.yml)
+    name: WEB-1080p
+    assign_to_existing: true         # put every series already in Sonarr on it
   remove_download_clients:           # leftovers from the previous setup
     - Deluge
 
@@ -39,6 +42,9 @@ radarr:
     host: localhost
     port: 8080
     category: movies
+  quality_profile:
+    name: HD Bluray + WEB
+    assign_to_existing: true
   remove_download_clients:
     - Deluge
 
@@ -53,3 +59,23 @@ prowlarr:
     radarr:
       prowlarr_url: http://localhost:9696
       url: http://localhost:7878
+  # Public trackers, as a starting point: edit freely. `definition` is the name in Prowlarr's indexer list.
+  # Private trackers need credentials: put them in .env and reference them, e.g.
+  #   - definition: mytracker
+  #     fields: {username: ${MYTRACKER_USER}, password: ${MYTRACKER_PASS}}
+  indexers:
+    - yts                            # movies
+    - definition: eztv               # TV
+      tags: [flaresolverr]
+    - thepiratebay
+    - definition: 1337x
+      tags: [flaresolverr]
+
+plex:
+  preferences:                       # ids as listed by Plex itself; unknown ones are skipped
+    customConnections: http://${LAN_IP}:32400   # Settings > Network > Custom server access URLs
+    LanNetworksBandwidth: ${LAN_SUBNETS}        # Settings > Network > LAN Networks (Tailscale counts as local)
+    PublishServerOnPlexOnlineKey: false         # Remote Access off: you use Tailscale
+  libraries:                         # Plex mounts $DATA_DIR at /data/media, hence the doubled "data/media"
+    - {name: Movies, type: movie, path: /data/media/data/media/movies}
+    - {name: TV Shows, type: show, path: /data/media/data/media/tv}

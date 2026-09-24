@@ -15,8 +15,13 @@ What it does, in this order
      sets the web UI user/password, applies the preferences, makes sure an API key exists.
   3. Sonarr/Radarr: login, hardlinks, root folders, qBittorrent download client (the app tests the
      connection), removes leftover clients (e.g. Deluge).
-  4. Prowlarr: login, FlareSolverr proxy + tag, links to Sonarr and Radarr.
-Indexers are not touched.
+  4. Prowlarr: login, FlareSolverr proxy + tag, the indexers listed in arr.yml (the app tests each
+     one), links to Sonarr and Radarr.
+  5. Sonarr/Radarr: assigns the quality profile Recyclarr created to the existing series/movies
+     (run it again after `recyclarr sync`; ./setup.sh does the whole sequence).
+  6. Plex: reads its token from Preferences.xml, sets the preferences and creates the libraries
+     listed in arr.yml. Best effort: Plex's API is not versioned like the *arr ones.
+It waits for each service to answer before talking to it.
 """
 import copy
 import http.cookiejar
@@ -24,6 +29,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -37,11 +43,12 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent
 CHECK = "--check" in sys.argv
 FORCE = "--force" in sys.argv
-PORTS = {"sonarr": 8989, "radarr": 7878, "prowlarr": 9696, "qbittorrent": 8080}
+PORTS = {"sonarr": 8989, "radarr": 7878, "prowlarr": 9696, "qbittorrent": 8080, "plex": 32400}
 API = {"sonarr": "/api/v3", "radarr": "/api/v3", "prowlarr": "/api/v1"}
 OPAQUE = ("password", "apiKey")  # the API returns these masked, so they cannot be compared
 changes = 0
 problems = 0
+PENDING_TAGS = set()
 
 
 class ApiError(Exception):
@@ -130,6 +137,26 @@ def request(method, url, headers=None, body=None, form=None, opener=None):
         return json.loads(raw) if raw else None
     except ValueError:
         return raw
+
+
+def wait_ready(label, url, timeout=240):
+    """Wait until something answers on url (any HTTP status counts: 401/302 mean the app is up)."""
+    deadline = time.time() + timeout
+    waited = False
+    while True:
+        try:
+            urllib.request.urlopen(url, timeout=5)
+            return True
+        except urllib.error.HTTPError:
+            return True
+        except (urllib.error.URLError, OSError):
+            if time.time() > deadline:
+                problem(f"{label} does not answer on {url} after {timeout}s: is the container up? (docker compose ps)")
+                return False
+            if not waited:
+                print(f"  waiting for {label}...")
+                waited = True
+            time.sleep(3)
 
 
 def enum_value(current, name, code):
@@ -346,6 +373,86 @@ def arr(name, host, key, cfg, auth, qbit):
                 if not CHECK:
                     request("DELETE", f"{base}/downloadclient/{client['id']}", headers)
 
+    profile = cfg.get("quality_profile")
+    if profile and profile.get("assign_to_existing"):
+        assign_profile(name, base, headers, profile["name"])
+
+
+def assign_profile(name, base, headers, profile_name):
+    profiles = request("GET", f"{base}/qualityprofile", headers)
+    profile = next((p for p in profiles if p["name"].lower() == profile_name.lower()), None)
+    if profile is None:
+        print(f"  quality profile '{profile_name}': not found yet (run `recyclarr sync` first, then this again)")
+        return
+    sonarr = name == "sonarr"
+    items = request("GET", f"{base}/{'series' if sonarr else 'movie'}", headers)
+    ids = [i["id"] for i in items if i.get("qualityProfileId") != profile["id"]]
+    if not ids:
+        print(f"  quality profile '{profile_name}': all {len(items)} titles already use it")
+        return
+    note(f"{len(ids)} of {len(items)} titles -> quality profile '{profile_name}'")
+    if not CHECK:
+        body = {"seriesIds" if sonarr else "movieIds": ids, "qualityProfileId": profile["id"]}
+        request("PUT", f"{base}/{'series' if sonarr else 'movie'}/editor", headers, body=body)
+
+
+def ensure_tag(base, headers, label):
+    label = label.lower()
+    tag = next((t for t in request("GET", f"{base}/tag", headers) if t["label"].lower() == label), None)
+    if tag is None:
+        if CHECK:
+            if label not in PENDING_TAGS:
+                PENDING_TAGS.add(label)
+                note(f"tag '{label}'")
+            return -1
+        note(f"tag '{label}'")
+        return request("POST", f"{base}/tag", headers, body={"label": label})["id"]
+    return tag["id"]
+
+
+def prowlarr_indexers(base, headers, items):
+    if not items:
+        return
+    existing = {i.get("definitionName"): i for i in request("GET", f"{base}/indexer", headers)}
+    schema = None
+    profile_id = None
+    for item in items:
+        spec = {"definition": item} if isinstance(item, str) else dict(item)
+        definition = spec["definition"]
+        tag_ids = [ensure_tag(base, headers, t) for t in spec.get("tags", [])]
+        current = existing.get(definition)
+        if current is not None:
+            if tag_ids and set(current.get("tags") or []) != set(tag_ids):
+                note(f"indexer {definition}: tags")
+                if not CHECK:
+                    current["tags"] = sorted(tag_ids)
+                    try:
+                        request("PUT", f"{base}/indexer/{current['id']}?forceSave=true", headers, body=current)
+                    except ApiError as error:
+                        problem(f"indexer {definition}: {error}")
+            else:
+                print(f"  indexer {definition}: ok")
+            continue
+        if schema is None:
+            schema = request("GET", f"{base}/indexer/schema", headers)
+            profile_id = request("GET", f"{base}/appprofile", headers)[0]["id"]
+        template = next((t for t in schema if t.get("definitionName") == definition), None)
+        if template is None:
+            problem(f"indexer '{definition}' does not exist in this Prowlarr version (name as in its indexer list)")
+            continue
+        body = copy.deepcopy(template)
+        body.update(name=spec.get("name", template["name"]), enable=True, appProfileId=profile_id,
+                    priority=spec.get("priority", template.get("priority", 25)), tags=sorted(tag_ids))
+        for field in body["fields"]:
+            if field["name"] in spec.get("fields", {}):
+                field["value"] = spec["fields"][field["name"]]
+        note(f"indexer {definition} added")
+        if not CHECK:
+            try:
+                request("POST", f"{base}/indexer?forceSave=false", headers, body=body)
+            except ApiError as error:
+                problem(f"indexer {definition}: {error}")
+
 
 def prowlarr(host, key, cfg, auth, keys):
     print("Prowlarr")
@@ -355,13 +462,10 @@ def prowlarr(host, key, cfg, auth, keys):
 
     proxy = cfg.get("flaresolverr")
     if proxy:
-        label = proxy.get("tag", "flaresolverr").lower()
-        tags = request("GET", f"{base}/tag", headers)
-        tag = next((t for t in tags if t["label"].lower() == label), None)
-        if tag is None:
-            note(f"tag '{label}'")
-            tag = {"id": -1} if CHECK else request("POST", f"{base}/tag", headers, body={"label": label})
-        upsert_provider(base, headers, "indexerproxy", "FlareSolverr", "FlareSolverr", {"host": proxy["host"]}, tags=[tag["id"]])
+        tag_id = ensure_tag(base, headers, proxy.get("tag", "flaresolverr"))
+        upsert_provider(base, headers, "indexerproxy", "FlareSolverr", "FlareSolverr", {"host": proxy["host"]}, tags=[tag_id])
+
+    prowlarr_indexers(base, headers, cfg.get("indexers"))
 
     for app, settings in (cfg.get("apps") or {}).items():
         if not keys.get(app):
@@ -369,6 +473,91 @@ def prowlarr(host, key, cfg, auth, keys):
             continue
         wanted = {"prowlarrUrl": settings["prowlarr_url"], "baseUrl": settings["url"], "apiKey": keys[app]}
         upsert_provider(base, headers, "applications", app.capitalize(), app.capitalize(), wanted, top={"syncLevel": "fullSync"})
+
+
+# ---------------------------------------------------------------- Plex
+def plex_token(env):
+    if env.get("PLEX_TOKEN"):
+        return env["PLEX_TOKEN"]
+    prefs = Path(env.get("BASE_DIR", "")) / "services" / "plex" / "Library" / "Application Support" / "Plex Media Server" / "Preferences.xml"
+    if prefs.exists():
+        match = re.search(r'PlexOnlineToken="([^"]+)"', prefs.read_text())
+        return match.group(1) if match else ""
+    return ""
+
+
+def plex_create_library(base, headers, name, kind, path):
+    """Plex has changed this endpoint over time: try the current agents, the legacy ones, then the newer route."""
+    movie = kind == "movie"
+    variants = [
+        ("/library/sections", {"name": name, "type": kind, "location": path, "language": "en-US",
+                               "agent": "tv.plex.agents.movie" if movie else "tv.plex.agents.series",
+                               "scanner": "Plex Movie" if movie else "Plex TV Series"}),
+        ("/library/sections", {"name": name, "type": kind, "location": path, "language": "en-US",
+                               "agent": "com.plexapp.agents.imdb" if movie else "com.plexapp.agents.thetvdb",
+                               "scanner": "Plex Movie Scanner" if movie else "Plex Series Scanner"}),
+        ("/library/sections/all", {"name": name, "type": 1 if movie else 2, "locations": path, "language": "en-US",
+                                   "agent": "tv.plex.agents.movie" if movie else "tv.plex.agents.series",
+                                   "scanner": "Plex Movie" if movie else "Plex TV Series"}),
+    ]
+    last = "unknown error"
+    for route, params in variants:
+        try:
+            request("POST", f"{base}{route}?{urllib.parse.urlencode(params)}", headers)
+        except ApiError as error:
+            last = str(error)
+            continue
+        sections = request("GET", f"{base}/library/sections", headers)["MediaContainer"].get("Directory", [])
+        if any(d["title"] == name for d in sections):
+            return True
+    problem(f"library '{name}': {last}")
+    return False
+
+
+def plex(host, cfg, env):
+    print("Plex")
+    base = f"http://{host}:{PORTS['plex']}"
+    if not wait_ready("Plex", f"{base}/identity"):
+        return
+    identity = request("GET", f"{base}/identity", {"Accept": "application/json"})["MediaContainer"]
+    if not identity.get("claimed"):
+        problem("the server is not linked to a Plex account. Put a fresh PLEX_CLAIM (https://www.plex.tv/claim/, valid "
+                "4 minutes) in .env, run `docker compose up -d --force-recreate plex`, then run this again")
+        return
+    token = plex_token(env)
+    if not token:
+        problem("no Plex token found in .env or Preferences.xml")
+        return
+    remember_key(env, "PLEX_TOKEN", token)
+    headers = {"X-Plex-Token": token, "Accept": "application/json"}
+
+    wanted = cfg.get("preferences") or {}
+    settings = {x["id"]: x.get("value") for x in request("GET", f"{base}/:/prefs", headers)["MediaContainer"].get("Setting", [])}
+    norm = lambda v: str(int(v)) if isinstance(v, bool) else str(v)
+    diff = {}
+    for key, value in wanted.items():
+        if key not in settings:
+            print(f"  preference {key}: skipped (this Plex has no such setting)")
+        elif norm(settings[key]) != norm(value):
+            diff[key] = norm(value)
+    if diff:
+        note("preferences: " + ", ".join(f"{k}={v}" for k, v in diff.items()))
+        if not CHECK:
+            try:
+                request("PUT", f"{base}/:/prefs?{urllib.parse.urlencode(diff)}", headers)
+            except ApiError as error:
+                problem(f"preferences: {error}")
+    else:
+        print("  preferences: ok")
+
+    have = request("GET", f"{base}/library/sections", headers)["MediaContainer"].get("Directory", [])
+    for lib in cfg.get("libraries", []):
+        if any(d["title"] == lib["name"] for d in have):
+            print(f"  library {lib['name']}: ok")
+            continue
+        note(f"library {lib['name']} ({lib['path']})")
+        if not CHECK:
+            plex_create_library(base, headers, lib["name"], lib["type"], lib["path"])
 
 
 # ---------------------------------------------------------------- main
@@ -385,8 +574,18 @@ def main():
     host = "127.0.0.1" if host in ("", "0.0.0.0") else host
     auth = cfg.get("auth") or {}
 
+    ready = {}
+    for label, port in (("qBittorrent", PORTS["qbittorrent"]), ("Sonarr", PORTS["sonarr"]),
+                        ("Radarr", PORTS["radarr"]), ("Prowlarr", PORTS["prowlarr"])):
+        ready[label.lower()] = wait_ready(label, f"http://{host}:{port}/")
+
     print("API keys")
     keys = read_api_keys(env)
+    for _ in range(20):  # a freshly started app writes config.xml a moment after it answers
+        if all(keys.get(a) for a in ("sonarr", "radarr", "prowlarr") if ready[a]):
+            break
+        time.sleep(3)
+        keys = read_api_keys(env)
     for app, value in keys.items():
         if value:
             remember_key(env, f"{app.upper()}_API_KEY", value)
@@ -394,22 +593,28 @@ def main():
             problem(f"no API key for {app}: has it started once? (looked in services/{app}/config.xml and .env)")
 
     qbit = None
-    try:
-        qbit = qbittorrent(host, cfg["qbittorrent"], env)
-    except ApiError as error:
-        problem(f"qBittorrent: {error}")
+    if ready["qbittorrent"]:
+        try:
+            qbit = qbittorrent(host, cfg["qbittorrent"], env)
+        except ApiError as error:
+            problem(f"qBittorrent: {error}")
 
     for app in ("sonarr", "radarr"):
-        if keys.get(app):
+        if keys.get(app) and ready[app]:
             try:
                 arr(app, host, keys[app], cfg[app], auth, qbit)
             except ApiError as error:
                 problem(f"{app}: {error}")
-    if keys.get("prowlarr"):
+    if keys.get("prowlarr") and ready["prowlarr"]:
         try:
             prowlarr(host, keys["prowlarr"], cfg["prowlarr"], auth, keys)
         except ApiError as error:
             problem(f"prowlarr: {error}")
+    if cfg.get("plex"):
+        try:
+            plex(host, cfg["plex"], env)
+        except ApiError as error:
+            problem(f"plex: {error}")
 
     print(f"\n{changes} change(s) {'needed' if CHECK else 'applied'}, {problems} problem(s).")
     if not CHECK and changes:
