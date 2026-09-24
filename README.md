@@ -23,9 +23,10 @@ Prowlarr, FlareSolverr, Sonarr, Radarr and qBittorrent share Gluetun's network n
 1. `git clone <this repo> media-server && cd media-server`, then `cp .env.sample .env && chmod 600 .env` and fill in `.env` (step 2).
 2. Create the folders (step 3) and put your Mullvad key in place (step 4).
 3. Run **`./scripts/setup.sh`**: it starts everything and configures qBittorrent, Sonarr, Radarr, Prowlarr, Plex and the quality profiles from `config/arr.yml`, without you opening a web UI (section 6.0).
-4. Open the dashboard at `http://<LAN_IP>` (password: `HOMEPAGE_AUTH_PASSWORD`).
+4. **Open TCP port 32400 on your router** and point it to the server, so Plex works from outside your home (see [Open the Plex port on your router](#open-the-plex-port-on-your-router)).
+5. Open the dashboard at `http://<LAN_IP>` (password: `HOMEPAGE_AUTH_PASSWORD`).
 
-The only thing that cannot be scripted is linking Plex to your account the first time (`PLEX_CLAIM`, point 2 of section 6.0). Everything below is the detail, in order.
+What cannot be scripted: linking Plex to your account the first time (`PLEX_CLAIM`, point 2 of section 6.0) and the router port forward (only your router can do that). Everything below is the detail, in order.
 
 ## Repository layout
 
@@ -202,6 +203,19 @@ Notes:
 - **Changing a password later:** the apps hide stored passwords and keys, so the script cannot compare them. Change it in `.env` and run `./scripts/apply_arr_config.py --force`.
 - **Quality profiles and your existing library:** Recyclarr creates the profiles, but the script does **not** move your existing titles to them unless you set `assign_to_existing: true` in `config/arr.yml`. Be careful: a file whose quality is not allowed by the profile counts as "upgradable" and any allowed release can replace it. The synced profiles are 1080p only, so enabling it would let your existing 2160p/remux files be replaced by smaller ones. Enable it only if everything you own already fits the profile (or use a 2160p profile from Recyclarr's templates). New titles use the profile you pick in the app's *Add* form.
 
+### Open the Plex port on your router
+
+Plex is the only service meant to be reached from the internet. The script switches Plex's *Remote Access* on, but only your router can let the traffic in, so this one step is yours (once):
+
+1. Give the server a **fixed LAN address** (a DHCP reservation in the router): the forward points to it and breaks if the address changes.
+2. Create a **port forward**: protocol **TCP**, external port **32400**, to the server's LAN address, internal port **32400**.
+   - **FRITZ!Box:** *Internet → Freigaben → Portfreigaben → Gerät für Freigaben hinzufügen* (choose the server) *→ Neue Freigabe → Portfreigabe*, TCP, 32400 to 32400 (menu names as in the German interface; they can differ slightly between firmware versions).
+   - **Other routers:** look for *Port forwarding*, *Virtual server* or *NAT*.
+3. In Plex, *Settings → Remote Access* must say **Fully accessible outside your network** (it can take a minute). Test it from outside too, for example with your phone on mobile data.
+4. If it does not work: [Troubleshooting](#troubleshooting) (double NAT, provider CGNAT, wrong address).
+
+Do not forward any other port: everything else stays private. You do not need UPnP (and it cannot work from inside Docker anyway).
+
 ### 6.1 qBittorrent by hand — `http://<LAN_IP>:8080`
 
 *(done by `apply_arr_config.py`)*
@@ -256,7 +270,7 @@ paste each API key, *Test*, *Save*. Prowlarr pushes the indexers to both apps.
    - Movies: `/data/media/data/media/movies`
 3. **Settings → Network**: *LAN Networks* = your `LAN_SUBNETS` (add your home subnet there); *Custom server access URLs* = `PLEX_CUSTOM_URLS` if you set it (Tailscale address, a DDNS name...). Plex runs in bridge mode, so without the LAN Networks, clients on your own network can be treated as remote.
 4. Hardware transcoding (Plex Pass): **Settings → Transcoder → Use hardware acceleration**.
-5. **Remote access** is switched on by the script, with the port set manually because UPnP cannot work from inside Docker. On your router, forward **TCP 32400** to the server's LAN address (on a FRITZ!Box: *Internet → Freigaben → Portfreigaben*, device = the server, TCP, port 32400 both sides). Then check *Settings → Remote Access*: it should say *Fully accessible outside your network*.
+5. **Remote access** is switched on by the script, with the port set manually because UPnP cannot work from inside Docker. The router side is up to you: [Open the Plex port on your router](#open-the-plex-port-on-your-router). Then *Settings → Remote Access* should say *Fully accessible outside your network*.
 
 Plex needs write access only to its own config, so the media is mounted `:ro`. If you enable *Allow media deletion* in Plex, remove the `:ro` from the `plex` volume.
 

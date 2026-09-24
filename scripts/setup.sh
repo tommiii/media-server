@@ -62,6 +62,9 @@ step "Checking that everything goes through the VPN"
 run ./scripts/check_vpn_connection.sh
 
 echo
+echo "Reminder: for Plex to work from outside your home, forward TCP port 32400 on your router to this server"
+echo "(README: 'Open the Plex port on your router'). Only the router can do that."
+echo
 if [ ${#failed[@]} -eq 0 ]; then
   echo "All done. Nothing needed a web UI."
 else
