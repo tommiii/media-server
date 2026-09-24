@@ -20,6 +20,12 @@ python3 -c "import yaml" 2>/dev/null || { echo "PyYAML is missing: sudo apt inst
 step "Checking .env and compose.yml"
 docker compose config -q || { echo "compose.yml or .env is not valid (see the message above)"; exit 1; }
 
+step "Creating the download folders (complete / incomplete)"
+set -a; . ./.env; set +a
+[ -n "${DATA_DIR:-}" ] || { echo "DATA_DIR is not set in .env"; exit 1; }
+mkdir -p "$DATA_DIR"/data/downloads/complete "$DATA_DIR"/data/downloads/incomplete \
+  || { echo "cannot create the folders: fix ownership first (README step 3)"; exit 1; }
+
 step "Starting the VPN and waiting for it to be healthy"
 docker compose up -d gluetun || exit 1
 for _ in $(seq 1 60); do

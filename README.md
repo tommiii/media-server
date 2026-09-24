@@ -62,7 +62,7 @@ If Docker creates the folders itself they end up owned by root and the apps cann
 ```bash
 set -a; . ./.env; set +a
 mkdir -p "$BASE_DIR"/services/{gluetun,prowlarr,sonarr,radarr,qbittorrent,recyclarr,homepage,plex}
-mkdir -p "$DATA_DIR"/data/{downloads,media/{tv-shows,movies}}
+mkdir -p "$DATA_DIR"/data/{downloads/{complete,incomplete},media/{tv-shows,movies}}
 sudo chown -R "$PUID:$PGID" "$BASE_DIR/services" "$DATA_DIR/data"
 ```
 
@@ -71,6 +71,8 @@ Resulting layout (follows [TRaSH Guides](https://trash-guides.info/File-and-Fold
 ```
 $DATA_DIR/data
 ├── downloads      <- qBittorrent writes here (it cannot see anything else)
+│   ├── incomplete <- unfinished torrents (files carry a .!qB extension)
+│   └── complete   <- finished torrents: Sonarr/Radarr import from here
 └── media
     ├── tv-shows   <- Sonarr root folder
     └── movies     <- Radarr root folder
@@ -153,7 +155,7 @@ What `apply_arr_config.py` does (`--check` shows it without changing anything):
 | Service | Effect |
 |---|---|
 | API keys | Reads the Sonarr, Radarr and Prowlarr keys from their `config.xml` and the Plex token from `Preferences.xml`, and writes them into `.env` if empty (Homepage and Recyclarr use them) |
-| qBittorrent | Signs in (on the first start with the temporary password from `docker logs`), sets your web UI login, `save_path=/data/downloads`, UPnP off, network interface `tun0`, and generates an API key into `.env` |
+| qBittorrent | Signs in (on the first start with the temporary password from `docker logs`), sets your web UI login, finished downloads in `/data/downloads/complete` and unfinished ones in `/data/downloads/incomplete` (partial files get a `.!qB` extension), UPnP off, network interface `tun0`, and generates an API key into `.env` |
 | Sonarr / Radarr | Forms login (always required), hardlinks on, root folders, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), removes the old Deluge client |
 | Prowlarr | Forms login, FlareSolverr proxy with tag `flaresolverr`, **the indexers listed in `arr.yml`** (Prowlarr tests each one), links to Sonarr and Radarr (full sync, so the indexers reach both) |
 | Plex | Sets *Custom server access URLs* and *LAN Networks* (your subnets, Tailscale included), turns Remote Access off, creates the *Movies* and *TV Shows* libraries |
@@ -173,7 +175,7 @@ Notes:
 
 1. Get the temporary password: `docker logs qbittorrent 2>&1 | grep -i "temporary password"`. Log in as `admin`.
 2. **Tools → Options → Web UI**: set your own username and password.
-3. **Downloads**: *Default Save Path* = `/data/downloads`.
+3. **Downloads**: *Default Save Path* = `/data/downloads/complete`; tick *Keep incomplete torrents in* = `/data/downloads/incomplete`; tick *Append .!qB extension to incomplete files*.
 4. **Connection**: untick *Use UPnP / NAT-PMP port forwarding* (useless behind Mullvad).
 5. **Advanced → Network Interface**: select **`tun0`** (the VPN interface inside Gluetun, also used for WireGuard). This is a second layer on top of the kill switch: qBittorrent will refuse to use any other interface.
 6. Save.
@@ -385,7 +387,7 @@ Something broke? `git revert <merge commit>`, then the same command.
 
 ## Migrating from the previous setup (WireGuard + Deluge + Overseerr + Watchtower)
 
-1. Let active downloads finish, or note what is in Deluge: qBittorrent starts empty. Finished files stay in `$DATA_DIR/data/downloads`.
+1. Let active downloads finish, or note what is in Deluge: qBittorrent starts empty. Finished files stay in `$DATA_DIR/data/downloads`; new downloads go to `downloads/complete` (unfinished ones to `downloads/incomplete`).
 2. Update the repo and follow steps 2–4 above (`.env`, folders, Mullvad key).
 3. Run `./restart_services.sh`: it stops the old stack and removes its leftover containers (`down --remove-orphans`) *before* starting Gluetun, which matters because only one client may use the Mullvad key at a time. Then continue from step 5 (`./check_vpn_connection.sh`).
 4. Sonarr/Radarr: replace the Deluge client with qBittorrent (6.3) and change Prowlarr/Sonarr/Radarr hosts from `wireguard`/IPs to `localhost` (6.2, 6.3).

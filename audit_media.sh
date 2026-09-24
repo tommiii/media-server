@@ -1,5 +1,6 @@
 #!/bin/bash
 # Checks that everything in downloads/ and media/ is really video (or a subtitle/artwork/nfo next to it).
+# downloads/incomplete is skipped: unfinished files are not video yet.
 #
 #   ./audit_media.sh               report only
 #   ./audit_media.sh --quarantine  also move suspicious files to $DATA_DIR/data/quarantine/ (nothing is deleted)
@@ -47,7 +48,7 @@ while IFS= read -r -d '' f; do
     case "$ext" in '!qb'|parts|part) continue ;; esac   # partial downloads
     flag "$f" "unexpected file type '.$ext' ($mime)"
   fi
-done < <(find "$root/downloads" "$root/media" -type f -print0 2>/dev/null)
+done < <(find "$root/downloads" "$root/media" -path "$root/downloads/incomplete" -prune -o -type f -print0 2>/dev/null)
 
 echo
 if [ "$flagged" -eq 0 ]; then echo "OK: nothing suspicious found."; else echo "$flagged file(s) flagged."; fi

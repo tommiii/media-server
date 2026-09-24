@@ -14,7 +14,10 @@ qbittorrent:
   username: ${QBITTORRENT_USERNAME:-admin}
   password: ${QBITTORRENT_PASSWORD:-}
   preferences:
-    save_path: /data/downloads
+    save_path: /data/downloads/complete         # finished torrents (Sonarr/Radarr import from here)
+    temp_path_enabled: true                     # keep unfinished torrents apart...
+    temp_path: /data/downloads/incomplete       # ...here; qBittorrent moves them to save_path when done
+    incomplete_files_ext: true                  # unfinished files get .!qB, so nothing can import or scan them half-done
     upnp: false                      # useless behind Mullvad (no port forwarding)
     current_network_interface: tun0  # refuse to use anything but the VPN interface
 
