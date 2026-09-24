@@ -244,10 +244,14 @@ def qbittorrent(host, cfg, env):
     wanted = dict(cfg.get("preferences") or {})
     cleanup = cfg.get("cleanup") or {}
     days = cleanup.get("delete_after_seeding_days")
-    if days is not None:  # days of seeding after completion -> qBittorrent's share limits (minutes; action 3 = remove with files)
+    only_after_import = bool(cleanup.get("only_after_import", True))
+    if days is not None:  # days of seeding after completion -> qBittorrent's share limits (minutes)
         if days:
+            # only_after_import: qBittorrent just STOPS the torrent (action 0); Sonarr/Radarr then delete it, files included,
+            # but only if THEY imported it. Otherwise qBittorrent deletes it itself (3 = with files, 1 = torrent only).
+            action = 0 if only_after_import else (3 if cleanup.get("delete_files", True) else 1)
             wanted.update(max_seeding_time_enabled=True, max_seeding_time=int(float(days) * 1440), max_ratio_enabled=False,
-                          max_ratio_act=3 if cleanup.get("delete_files", True) else 1)
+                          max_ratio_act=action)
         else:
             wanted.update(max_seeding_time_enabled=False, max_ratio_enabled=False)
     current = request("GET", f"{base}/api/v2/app/preferences", referer, opener=opener)
@@ -277,7 +281,7 @@ def qbittorrent(host, cfg, env):
     remember_key(env, "QBITTORRENT_API_KEY", key)
     if first_run and not password:
         return None  # nothing usable to give Sonarr/Radarr yet
-    return {"user": user, "password": password}
+    return {"user": user, "password": password, "only_after_import": bool(days) and only_after_import}
 
 
 # ---------------------------------------------------------------- Sonarr / Radarr / Prowlarr
@@ -391,7 +395,9 @@ def arr(name, host, key, cfg, auth, qbit):
         name_ = dc.pop("name", "qBittorrent")
         wanted = {camel(k): v for k, v in dc.items()}
         wanted.update({"username": qbit["user"], "password": qbit["password"]})
-        upsert_provider(base, headers, "downloadclient", "QBittorrent", name_, wanted)
+        # only_after_import: Sonarr/Radarr delete a download (files included) once they imported it and qBittorrent stopped it
+        top = {"removeCompletedDownloads": True} if qbit.get("only_after_import") else None
+        upsert_provider(base, headers, "downloadclient", "QBittorrent", name_, wanted, top=top)
     elif dc:
         print("  download client: skipped (qBittorrent login unavailable)")
 

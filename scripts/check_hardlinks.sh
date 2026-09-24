@@ -3,8 +3,8 @@
 #
 #   ./scripts/check_hardlinks.sh
 #
-# qBittorrent deletes a torrent and its files some days after it finished (config/arr.yml). That is safe
-# only because Sonarr/Radarr import with HARDLINKS: the file in downloads/complete and the one in media/
+# A finished torrent is removed, files included, some days later (config/arr.yml: qBittorrent stops it,
+# Sonarr/Radarr delete it once THEY imported it). That is safe for the library only because they import with HARDLINKS: the file in downloads/complete and the one in media/
 # are the same data under two names, so removing the first leaves the second. This script checks:
 #   1. Sonarr and Radarr have "Use Hardlinks instead of Copy" on
 #   2. downloads/complete and media/ are on the same filesystem (hardlinks cannot cross filesystems)
@@ -62,7 +62,11 @@ ok "$linked finished file(s) are hardlinked into media/: deleting the download k
 archives=$(find "$complete" -type f -size +"$MIN_SIZE" \( -iname '*.rar' -o -iname '*.r[0-9][0-9]' -o -iname '*.zip' -o -iname '*.7z' \) 2>/dev/null | wc -l | tr -d ' ')
 [ "$archives" -gt 0 ] && note "$archives archive file(s) in downloads/complete: Unpackerr extracts them and Sonarr/Radarr import the video from the extracted copy. The archive itself is never hardlinked, by design; if the extracted video was never imported, it is not in your library"
 if [ "$alone" -gt 0 ]; then
-  bad "$alone finished file(s) are NOT hardlinked: not imported yet, or imported as a copy. If the cleanup deletes them and nothing else holds the data, it is gone:"
+  if grep -Eq '^[[:space:]]+only_after_import:[[:space:]]*true' config/arr.yml 2>/dev/null; then
+    note "$alone finished file(s) are NOT hardlinked (never imported, or imported as a copy). They are safe: with only_after_import Sonarr/Radarr delete a download only after importing it, so these stay on disk (stopped in qBittorrent) until you deal with them:"
+  else
+    bad "$alone finished file(s) are NOT hardlinked: not imported yet, or imported as a copy. qBittorrent deletes downloads by itself, so if the clean-up removes them and nothing else holds the data, it is gone:"
+  fi
   now=$(date +%s)
   for entry in "${alone_list[@]:0:20}"; do
     IFS='|' read -r f mtime size <<<"$entry"
@@ -80,5 +84,11 @@ done < <(find "$media" -type f -size +"$MIN_SIZE" -mtime -"$RECENT_DAYS" -print0
 if [ "$copies" -gt 0 ]; then note "$copies file(s) added to media/ in the last $RECENT_DAYS days have no second link: they were copied (or the download is already gone). Fine for safety, but it costs disk space while the download is still seeding"; else ok "no recent copies in media/"; fi
 
 echo
-if [ "$fail" = 0 ]; then echo "Cleanup is safe: everything finished is hardlinked into the library."; else echo "Fix the FAIL lines before relying on the automatic cleanup."; fi
+if [ "$fail" != 0 ]; then
+  echo "Fix the FAIL lines before relying on the automatic cleanup."
+elif [ "$alone" -gt 0 ]; then
+  echo "Cleanup is safe: what is hardlinked is deleted after the delay, the ${alone} unlinked download(s) above are kept."
+else
+  echo "Cleanup is safe: everything finished is hardlinked into the library."
+fi
 exit "$fail"
