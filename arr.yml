@@ -1,0 +1,55 @@
+# Desired state of the *arr stack. Applied by ./apply_arr_config.py (idempotent, --check for a dry run).
+#
+# ${VAR} / ${VAR:-default} are replaced with values from .env, so no secret lives in this file.
+# Hosts below are the ones the apps use to reach each other from INSIDE Gluetun's network namespace
+# (that is why everything is localhost). Indexers are deliberately not managed here: add them in Prowlarr.
+
+# Web UI login (Forms authentication, always required) for Sonarr, Radarr and Prowlarr.
+# Leave ARR_USERNAME empty in .env to skip.
+auth:
+  username: ${ARR_USERNAME:-}
+  password: ${ARR_PASSWORD:-}
+
+qbittorrent:
+  username: ${QBITTORRENT_USERNAME:-admin}
+  password: ${QBITTORRENT_PASSWORD:-}
+  preferences:
+    save_path: /data/downloads
+    upnp: false                      # useless behind Mullvad (no port forwarding)
+    current_network_interface: tun0  # refuse to use anything but the VPN interface
+
+sonarr:
+  hardlinks: true                    # import by hardlink: instant, no extra disk space
+  root_folders:
+    - /data/media/tv
+  download_client:
+    name: qBittorrent
+    host: localhost
+    port: 8080
+    category: tv
+  remove_download_clients:           # leftovers from the previous setup
+    - Deluge
+
+radarr:
+  hardlinks: true
+  root_folders:
+    - /data/media/movies
+  download_client:
+    name: qBittorrent
+    host: localhost
+    port: 8080
+    category: movies
+  remove_download_clients:
+    - Deluge
+
+prowlarr:
+  flaresolverr:
+    host: http://localhost:8191/
+    tag: flaresolverr                # give this tag to the indexers that need Cloudflare solving
+  apps:
+    sonarr:
+      prowlarr_url: http://localhost:9696
+      url: http://localhost:8989
+    radarr:
+      prowlarr_url: http://localhost:9696
+      url: http://localhost:7878
