@@ -77,9 +77,12 @@ prowlarr:
   flaresolverr:
     host: http://localhost:8191/
     tag: flaresolverr                # give this tag to the indexers that need Cloudflare solving
-  # Releases with fewer seeders are rejected by Sonarr/Radarr (they pick the next best one instead). It goes into
-  # Prowlarr's app profiles and reaches every indexer that has no minimum of its own. Default in Prowlarr: 1.
-  minimum_seeders: 5
+  # Releases with fewer seeders are rejected by Sonarr/Radarr (they pick the next best one instead: this is what makes
+  # the quality ladder walk down). One value for every quality: the apps have no per-quality threshold. 10 because a
+  # 4K film weighs 10-25 GB and, without port forwarding on Mullvad, a torrent with few seeders crawls; popular titles
+  # have far more. If a niche title never downloads, lower it (or use Interactive Search in the app for that one).
+  # It goes into Prowlarr's app profiles and reaches every indexer that has no minimum of its own. Prowlarr's default: 1.
+  minimum_seeders: 10
   apps:
     sonarr:
       prowlarr_url: http://localhost:9696
