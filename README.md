@@ -18,6 +18,15 @@ Prowlarr, FlareSolverr, Sonarr, Radarr and qBittorrent share Gluetun's network n
 
 ---
 
+## Quick start
+
+1. `git clone <this repo> media-server && cd media-server`, then `cp .env.sample .env && chmod 600 .env` and fill in `.env` (step 2).
+2. Create the folders (step 3) and put your Mullvad key in place (step 4).
+3. Run **`./scripts/setup.sh`**: it starts everything and configures qBittorrent, Sonarr, Radarr, Prowlarr, Plex and the quality profiles from `config/arr.yml`, without you opening a web UI (section 6.0).
+4. Open the dashboard at `http://<LAN_IP>` (password: `HOMEPAGE_AUTH_PASSWORD`).
+
+The only thing that cannot be scripted is linking Plex to your account the first time (`PLEX_CLAIM`, point 2 of section 6.0). Everything below is the detail, in order.
+
 ## Repository layout
 
 ```
@@ -30,7 +39,7 @@ config/
   arr.yml              desired state of qBittorrent, Sonarr, Radarr, Prowlarr (indexers) and Plex
   recyclarr/           quality profiles and size limits (TRaSH)
   homepage/            dashboard
-services/              created on the server: each app's own data (not in git)
+services/              created on the server: each app's own data (git-ignored)
 ```
 
 All scripts can be run from any directory; they find the repository root themselves.
@@ -69,12 +78,15 @@ Edit `.env`:
 | `PLEX_CLAIM` | token from https://www.plex.tv/claim/ (valid 4 minutes, fill it right before the first start) |
 | `WIREGUARD_ADDRESSES` | from Mullvad, see step 4 |
 | `VPN_COUNTRIES` | Mullvad exit country, English name (`Netherlands`, `Sweden`, `Switzerland`, `Germany`, ...) |
+| `SONARR_API_KEY`, `RADARR_API_KEY`, `PROWLARR_API_KEY`, `QBITTORRENT_API_KEY`, `PLEX_TOKEN` | leave empty: `apply_arr_config.py` fills them in |
+
+Put values that contain spaces, `$` or `#` in single quotes, e.g. `ARR_PASSWORD='my pass#1'`: the file is read by Docker Compose, by the shell (step 3) and by the scripts.
 
 > Tailscale/remote access: `LAN_IP` limits where ports are published. If you reach the server through its Tailscale IP, set `LAN_IP` to the Tailscale IP of the server (or `0.0.0.0` if the host firewall already restricts access) **and** add `100.64.0.0/10` to `LAN_SUBNETS`.
 
 ## 3. Create folders (do this before the first start)
 
-If Docker creates the folders itself they end up owned by root and the apps cannot write to them.
+If Docker creates the folders itself they end up owned by root and the apps cannot write to them. `services/` lives inside the repository folder when `BASE_DIR` is the repository (it is in `.gitignore`, so it never reaches git).
 
 ```bash
 set -a; . ./.env; set +a
@@ -82,6 +94,8 @@ mkdir -p "$BASE_DIR"/services/{gluetun,prowlarr,sonarr,radarr,qbittorrent,recycl
 mkdir -p "$DATA_DIR"/data/{downloads/{complete,incomplete},media/{tv-shows,movies}}
 sudo chown -R "$PUID:$PGID" "$BASE_DIR/services" "$DATA_DIR/data"
 ```
+
+On a server that already has a big media library, skip the recursive `chown` of `$DATA_DIR/data` (it can take a long time and the files are already yours): `chown "$PUID:$PGID"` the new `downloads/complete` and `downloads/incomplete` folders only.
 
 Resulting layout (follows [TRaSH Guides](https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Docker/) so Sonarr/Radarr can hardlink and move instantly):
 
@@ -158,6 +172,7 @@ Everything is configured **from files**, without opening the UIs: `config/arr.ym
 
 | Step | Effect |
 |---|---|
+| Folders | Creates `downloads/complete` and `downloads/incomplete` if missing |
 | VPN | Starts Gluetun and waits until it is healthy (if it cannot connect it prints the log and stops) |
 | Start | Starts every other container |
 | `apply_arr_config.py` | See the table below |
@@ -232,7 +247,7 @@ paste each API key, *Test*, *Save*. Prowlarr pushes the indexers to both apps.
 
 ### 6.4 Plex — `http://<LAN_IP>:32400/web`
 
-*(libraries and network settings are done by the script; only the account link and hardware transcoding remain)*
+*(libraries and network settings are done by the script; only the account link and hardware transcoding remain. Steps 2 and 3 below are what the script sets.)*
 
 1. Because of `PLEX_CLAIM` the server is attached to your Plex account automatically. If you skipped it (or it expired), run `docker compose up -d --force-recreate plex` with a fresh token.
 2. Add libraries. Plex mounts `$DATA_DIR` read-only as `/data/media`, so the folders are:
@@ -240,11 +255,13 @@ paste each API key, *Test*, *Save*. Prowlarr pushes the indexers to both apps.
    - Movies: `/data/media/data/media/movies`
 3. **Settings → Network**: *Custom server access URLs* = `http://<LAN_IP>:32400`; *LAN Networks* = your subnet (e.g. `192.168.1.0/24`). Plex runs in bridge mode, so without this, clients on your own network can be treated as remote.
 4. Hardware transcoding (Plex Pass): **Settings → Transcoder → Use hardware acceleration**.
-5. Remote access: forward TCP 32400 on your router to `<LAN_IP>`, or use Tailscale (see the note in step 2).
+5. Remote access: the script turns it off (you reach Plex through Tailscale, see the note in step 2). To use a router port forward instead, set `PublishServerOnPlexOnlineKey: true` in the `plex` section of `config/arr.yml`, forward TCP 32400 to `<LAN_IP>`, and run the script again.
 
 Plex needs write access only to its own config, so the media is mounted `:ro`. If you enable *Allow media deletion* in Plex, remove the `:ro` from the `plex` volume.
 
 ### 6.5 Homepage — `http://<LAN_IP>`
+
+*(the credentials it needs are filled in by the script; nothing else to do)*
 
 The dashboard is configured **as code**: `config/homepage/settings.yaml`, `services.yaml` and `widgets.yaml` live in this repo and are mounted read-only, so the container cannot change them; a change is a `git commit` plus `docker compose restart homepage`. Homepage also insists on a few other, empty files (bookmarks, docker, ...): it creates them itself in `$BASE_DIR/services/homepage`, outside the repo. It has no Docker socket. You log in with `HOMEPAGE_AUTH_PASSWORD`.
 
@@ -262,20 +279,21 @@ docker compose up -d homepage
 
 Add or reorder services in `config/homepage/services.yaml`. Anything written as `{{HOMEPAGE_VAR_NAME}}` in those files is replaced with the `HOMEPAGE_VAR_NAME` environment variable of the container (see the `homepage` service in `compose.yml`), so no secret ever ends up in git. Use `gluetun:<port>` for services behind the VPN and `plex:32400` for Plex when you configure widgets (Homepage reaches them over the Docker networks).
 
-### 6.6 Recyclarr and download safety (do this once the keys are in `.env`)
+### 6.6 Recyclarr and download safety by hand
 
-Both need the Sonarr/Radarr (and qBittorrent) API keys, which `apply_arr_config.py` (6.0) puts in `.env`. Recyclarr does not sync when it starts: it only runs at its schedule (daily at 00:00 UTC), so **run the first sync by hand** as below.
+*(done by `setup.sh`; use this to run the two steps on their own)*
+
+Both need the Sonarr/Radarr (and qBittorrent) API keys, which `apply_arr_config.py` (6.0) puts in `.env`. Recyclarr does not sync when it starts: it only runs at its schedule (daily at 00:00 UTC), so the first sync has to be started by hand:
 
 ```bash
-docker compose up -d                                        # picks up the new keys (homepage, recyclarr)
-docker compose exec recyclarr recyclarr sync --preview      # what Recyclarr would change
-docker compose exec recyclarr recyclarr sync                # first sync, now (then it repeats daily by itself)
-docker compose logs recyclarr
-./scripts/apply_download_safety.py --check                          # what the file filters would change
-./scripts/apply_download_safety.py                                  # apply them
+docker compose up -d                                       # picks up the new keys (homepage, recyclarr)
+docker compose exec recyclarr recyclarr sync --preview     # what Recyclarr would change
+docker compose exec recyclarr recyclarr sync               # first sync, now (then it repeats daily by itself)
+./scripts/apply_download_safety.py --check                 # what the file filters would change
+./scripts/apply_download_safety.py                         # apply them
 ```
 
-- **Recyclarr** reads `config/recyclarr/configs/media.yml` (in this repo, mounted read-only). It also sets the per-quality **size limits** ([File size](#file-size-what-is-configured)). It creates the TRaSH profiles **WEB-1080p** (Sonarr) and **HD Bluray + WEB** (Radarr) with their custom formats. It does not touch your existing profiles: assign the new one to your series/movies (Sonarr: *Series → Mass Editor*; Radarr: *Movies → Mass Editor*) and to your defaults. For 2160p, remux or anime, take another template from https://github.com/recyclarr/config-templates and put it in `config/recyclarr/configs/`.
+- **Recyclarr** reads `config/recyclarr/configs/media.yml` (in this repo, mounted read-only). It also sets the per-quality **size limits** ([File size](#file-size-what-is-configured)). It creates the TRaSH profiles **WEB-1080p** (Sonarr) and **HD Bluray + WEB** (Radarr) with their custom formats. It does not touch your existing profiles or titles (see the warning in 6.0). For 2160p, remux or anime, take another template from https://github.com/recyclarr/config-templates and put it in `config/recyclarr/configs/`.
 - **`apply_download_safety.py`** (file filters and the Radarr size ceiling) is idempotent: run it again whenever Prowlarr adds indexers to Sonarr/Radarr (the setting it enforces is per indexer, see below).
 
 ## Only video files: how downloads are controlled
@@ -325,14 +343,14 @@ Files you already have are not touched. Rejections show up in *Interactive Searc
 ## 7. Day to day
 
 ```bash
-docker compose ps                    # status
-docker compose logs -f gluetun       # VPN logs
-./scripts/check_vpn_connection.sh            # is everything on the VPN?
-./scripts/audit_media.sh                     # is everything in downloads/media really video?
-./scripts/setup.sh                           # bring everything to the state described in arr.yml (safe to repeat)
-./scripts/apply_arr_config.py --check        # is the *arr setup still what arr.yml says? (changes nothing)
-./scripts/apply_download_safety.py           # re-apply file filters (after adding indexers)
-./scripts/restart_services.sh                # pull + recreate everything
+docker compose ps                                # status
+docker compose logs -f gluetun                   # VPN logs
+./scripts/check_vpn_connection.sh                # is everything on the VPN?
+./scripts/audit_media.sh                         # is everything in downloads/media really video?
+./scripts/setup.sh                               # bring everything to the state described in config/arr.yml (safe to repeat)
+./scripts/apply_arr_config.py --check            # is the *arr setup still what config/arr.yml says? (changes nothing)
+./scripts/apply_download_safety.py               # re-apply file filters (after adding indexers)
+./scripts/restart_services.sh                    # pull + recreate everything
 ```
 
 **Updates: Renovate opens a pull request, you merge it.** Images are pinned to exact versions (no auto-updater, no Docker socket for anybody). [Renovate](https://github.com/apps/renovate) watches `compose.yml` and proposes new versions as pull requests; nothing changes on the server until you merge one and pull it.
@@ -370,7 +388,8 @@ Something broke? `git revert <merge commit>`, then the same command.
 - Plex and the VPN group are on separate Docker networks. Homepage is the only container on both (it needs to query both), with a read-only config and a login.
 - All containers use `no-new-privileges`; every container except Gluetun also uses `cap_drop: ALL` (only the capabilities needed by the linuxserver init are added back). If a container refuses to start, remove `cap_drop` for that service and check `docker compose logs <service>`.
 - The Mullvad key is a Docker secret and `.env` is git-ignored.
-- Set a password on every web UI (steps 6.1–6.3). The apps run inside the VPN but they are still reachable by anyone on your LAN.
+- Every web UI has a login (set from `ARR_*` / `QBITTORRENT_*` / `HOMEPAGE_AUTH_PASSWORD` in `.env`). The apps run inside the VPN but they are still reachable by anyone who can reach `LAN_IP`.
+- `services/` (each app's database and API keys) and `.env` are git-ignored: never commit them.
 
 ## Troubleshooting
 
@@ -400,12 +419,11 @@ Something broke? `git revert <merge commit>`, then the same command.
 | `apply_download_safety.py`: `skipped ... is empty` or connection errors | Fill the API keys in `.env`; the script talks to `http://<LAN_IP>:<port>`, so run it from a machine in `LAN_SUBNETS` (the server itself is fine) |
 | A release disappeared / "Caution: Found executable" in Activity | The protection worked: the release was blocklisted and another one is tried |
 | Plex clients on the LAN play "remotely" | Set *LAN Networks* and *Custom server access URLs* (6.4) |
-| Plex says the server is not claimed | Generate a new claim token, put it in `.env`, `docker compose up -d --force-recreate plex` |
 
 ## Migrating from the previous setup (WireGuard + Deluge + Overseerr + Watchtower)
 
 1. Let active downloads finish, or note what is in Deluge: qBittorrent starts empty. Finished files stay in `$DATA_DIR/data/downloads`; new downloads go to `downloads/complete` (unfinished ones to `downloads/incomplete`).
 2. Update the repo and follow steps 2–4 above (`.env`, folders, Mullvad key).
-3. Run `./scripts/restart_services.sh`: it stops the old stack and removes its leftover containers (`down --remove-orphans`) *before* starting Gluetun, which matters because only one client may use the Mullvad key at a time. Then continue from step 5 (`./scripts/check_vpn_connection.sh`).
-4. Sonarr/Radarr: replace the Deluge client with qBittorrent (6.3) and change Prowlarr/Sonarr/Radarr hosts from `wireguard`/IPs to `localhost` (6.2, 6.3).
+3. Stop the old stack with the old files (`docker compose down`) *before* starting Gluetun: only one client may use the Mullvad key at a time. Then run `./scripts/setup.sh`.
+4. The script also migrates the apps: it replaces the Deluge client with qBittorrent and changes the Prowlarr/Sonarr/Radarr addresses from `wireguard` or container names to `localhost` (check with `./scripts/apply_arr_config.py --check` first).
 5. You can delete `$BASE_DIR/services/{deluge,overseerr,wireguard,homarr}` when you are sure you do not need them. Requests made in Overseerr are not migrated.
