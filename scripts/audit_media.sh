@@ -2,8 +2,8 @@
 # Checks that everything in downloads/ and media/ is really video (or a subtitle/artwork/nfo next to it).
 # downloads/incomplete is skipped: unfinished files are not video yet.
 #
-#   ./audit_media.sh               report only
-#   ./audit_media.sh --quarantine  also move suspicious files to $DATA_DIR/data/quarantine/ (nothing is deleted)
+#   ./scripts/audit_media.sh               report only
+#   ./scripts/audit_media.sh --quarantine  also move suspicious files to $DATA_DIR/data/quarantine/ (nothing is deleted)
 #
 # Two checks per file:
 #   1. extension: only video, subtitle and artwork/nfo extensions are expected
@@ -12,7 +12,7 @@
 # Exit code is 1 if anything is flagged, so it can run from cron.
 
 set -u
-cd "$(dirname "$0")" || exit 2
+cd "$(dirname "$0")/.." || exit 2   # repository root
 [ -f .env ] || { echo ".env not found"; exit 2; }
 set -a; . ./.env; set +a
 command -v file >/dev/null || { echo "'file' is required (apt install file)"; exit 2; }

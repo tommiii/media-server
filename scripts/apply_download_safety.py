@@ -6,8 +6,8 @@ UIs published on the LAN address. Run it after the first setup and again wheneve
 adds new indexers to Sonarr/Radarr (their "Fail Downloads" option is per indexer and empty
 by default, which is why executables can slip through).
 
-    ./apply_download_safety.py            apply
-    ./apply_download_safety.py --check    show what would change, change nothing
+    ./scripts/apply_download_safety.py            apply
+    ./scripts/apply_download_safety.py --check    show what would change, change nothing
 
 What it sets
   qBittorrent  never download files matching EXCLUDED_PATTERNS; never run external programs
@@ -150,7 +150,7 @@ def arr(name, port, host, key):
 
 
 def main():
-    env_file = Path(__file__).resolve().parent / ".env"
+    env_file = Path(__file__).resolve().parent.parent / ".env"
     if not env_file.exists():
         sys.exit(".env not found (run this from the repository, after creating .env)")
     env = load_env(env_file)

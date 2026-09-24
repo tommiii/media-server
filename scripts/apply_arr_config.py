@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Configure qBittorrent, Sonarr, Radarr and Prowlarr from arr.yml. Idempotent.
 
-    ./apply_arr_config.py            apply
-    ./apply_arr_config.py --check    show what would change, change nothing
-    ./apply_arr_config.py --force    also rewrite passwords/API keys inside existing entries
+    ./scripts/apply_arr_config.py            apply
+    ./scripts/apply_arr_config.py --check    show what would change, change nothing
+    ./scripts/apply_arr_config.py --force    also rewrite passwords/API keys inside existing entries
 
 Run it on the server, from the repository, once the containers are up. It talks to the UIs
 published on LAN_IP (see .env). Needs PyYAML: sudo apt install python3-yaml
@@ -41,7 +41,7 @@ try:
 except ImportError:
     sys.exit("PyYAML is required:  sudo apt install python3-yaml   (or: pip install pyyaml)")
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent  # the repository root (this file lives in scripts/)
 CHECK = "--check" in sys.argv
 FORCE = "--force" in sys.argv
 PORTS = {"sonarr": 8989, "radarr": 7878, "prowlarr": 9696, "qbittorrent": 8080, "plex": 32400}
@@ -581,9 +581,9 @@ def main():
     if not env_file.exists():
         sys.exit(".env not found")
     env = load_env(env_file)
-    loaded = yaml.safe_load((ROOT / "arr.yml").read_text())
+    loaded = yaml.safe_load((ROOT / "config" / "arr.yml").read_text())
     if not isinstance(loaded, dict) or not all(k in loaded for k in ("qbittorrent", "sonarr", "radarr", "prowlarr")):
-        sys.exit("arr.yml is empty or incomplete: it needs the sections qbittorrent, sonarr, radarr and prowlarr")
+        sys.exit("config/arr.yml is empty or incomplete: it needs the sections qbittorrent, sonarr, radarr and prowlarr")
     cfg = expand(loaded, env)
     host = env.get("LAN_IP", "127.0.0.1")
     host = "127.0.0.1" if host in ("", "0.0.0.0") else host

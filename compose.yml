@@ -139,7 +139,7 @@ services:
     restart: *restart
 
   # Keeps Sonarr/Radarr quality profiles + custom formats in sync with TRaSH Guides.
-  # Config lives in ./recyclarr/configs (read-only); state/cache in $BASE_DIR/services/recyclarr.
+  # Config lives in ./config/recyclarr/configs (read-only); state/cache in $BASE_DIR/services/recyclarr.
   # Rootless image: runs as PUID:PGID, no capabilities needed, read-only root filesystem.
   recyclarr:
     <<: [*hardened, *vpn]
@@ -164,7 +164,7 @@ services:
       RADARR_API_KEY: ${RADARR_API_KEY:-}
     volumes:
       - ${BASE_DIR}/services/recyclarr:/config
-      - ./recyclarr/configs:/config/configs:ro
+      - ./config/recyclarr/configs:/config/configs:ro
     restart: *restart
 
   # ---------------------------------------------------------------- outside the VPN
@@ -190,7 +190,7 @@ services:
       - plex_net
     restart: *restart
 
-  # Dashboard: the three config files that matter live in this repo (./homepage/*.yaml, mounted read-only),
+  # Dashboard: the three config files that matter live in this repo (./config/homepage/*.yaml, mounted read-only),
   # no Docker socket. Homepage insists on finding a few other (empty) files; it creates them itself in the
   # writable $BASE_DIR/services/homepage, outside the repo.
   # Sits on vpn_net + plex_net so widgets can call gluetun:<port> and plex:32400 directly.
@@ -207,7 +207,7 @@ services:
       HOMEPAGE_EXTERNAL_URL: http://${LAN_IP}
       HOMEPAGE_AUTH_SECRET: ${HOMEPAGE_AUTH_SECRET:?set HOMEPAGE_AUTH_SECRET in .env (openssl rand -base64 32)}
       HOMEPAGE_AUTH_PASSWORD: ${HOMEPAGE_AUTH_PASSWORD:?set HOMEPAGE_AUTH_PASSWORD in .env}
-      # substituted into ./homepage/*.yaml as {{HOMEPAGE_VAR_...}}
+      # substituted into ./config/homepage/*.yaml as {{HOMEPAGE_VAR_...}}
       HOMEPAGE_VAR_LAN_IP: ${LAN_IP}
       HOMEPAGE_VAR_SONARR_KEY: ${SONARR_API_KEY:-}
       HOMEPAGE_VAR_RADARR_KEY: ${RADARR_API_KEY:-}
@@ -216,9 +216,9 @@ services:
       HOMEPAGE_VAR_PLEX_TOKEN: ${PLEX_TOKEN:-}
     volumes:
       - ${BASE_DIR}/services/homepage:/app/config
-      - ./homepage/settings.yaml:/app/config/settings.yaml:ro
-      - ./homepage/services.yaml:/app/config/services.yaml:ro
-      - ./homepage/widgets.yaml:/app/config/widgets.yaml:ro
+      - ./config/homepage/settings.yaml:/app/config/settings.yaml:ro
+      - ./config/homepage/services.yaml:/app/config/services.yaml:ro
+      - ./config/homepage/widgets.yaml:/app/config/widgets.yaml:ro
     ports:
       - ${LAN_IP}:80:3000
     networks:

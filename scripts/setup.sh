@@ -2,12 +2,12 @@
 # From "containers not started" to "everything configured", without opening any web UI.
 # Safe to run again at any time: every step only changes what differs.
 #
-#   ./setup.sh
+#   ./scripts/setup.sh
 #
 # Before the first run: .env filled in (README step 2), folders created (step 3), Mullvad key in
 # place (step 4). For Plex, PLEX_CLAIM in .env if the server has never been linked to your account.
 set -uo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."   # repository root
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 failed=()
@@ -44,7 +44,7 @@ step "Starting everything else"
 docker compose up -d || exit 1
 
 step "Configuring qBittorrent, Sonarr, Radarr, Prowlarr (indexers included) and Plex from arr.yml"
-run ./apply_arr_config.py
+run ./scripts/apply_arr_config.py
 
 step "Recreating containers that read the new API keys (Homepage, Recyclarr)"
 run docker compose up -d
@@ -53,13 +53,13 @@ step "Recyclarr: quality profiles, custom formats and size limits"
 run docker compose exec -T recyclarr recyclarr sync
 
 step "Assigning the profiles (only where assign_to_existing is true in arr.yml; default: no)"
-run ./apply_arr_config.py
+run ./scripts/apply_arr_config.py
 
 step "File filters (executables are rejected) and size ceiling"
-run ./apply_download_safety.py
+run ./scripts/apply_download_safety.py
 
 step "Checking that everything goes through the VPN"
-run ./check_vpn_connection.sh
+run ./scripts/check_vpn_connection.sh
 
 echo
 if [ ${#failed[@]} -eq 0 ]; then

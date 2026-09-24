@@ -1,4 +1,4 @@
-# Desired state of the *arr stack. Applied by ./apply_arr_config.py (idempotent, --check for a dry run).
+# Desired state of the *arr stack. Applied by ./scripts/apply_arr_config.py (idempotent, --check for a dry run).
 #
 # ${VAR} / ${VAR:-default} are replaced with values from .env, so no secret lives in this file.
 # Hosts below are the ones the apps use to reach each other from INSIDE Gluetun's network namespace
@@ -30,7 +30,7 @@ sonarr:
     host: localhost
     port: 8080
     category: tv
-  quality_profile:                   # created by Recyclarr (recyclarr/configs/media.yml)
+  quality_profile:                   # created by Recyclarr (config/recyclarr/configs/media.yml)
     name: WEB-1080p
     # DANGER when true: a file whose quality is not in the profile counts as "upgradable", so any release the
     # profile allows may replace it. This profile is 1080p only: with true, your existing 2160p/remux files
