@@ -5,7 +5,7 @@
 fail=0
 check() {
   local name=$1 out
-  out=$(docker exec "$name" sh -c 'curl -s -m 10 https://am.i.mullvad.net/connected || wget -qO- -T 10 https://am.i.mullvad.net/connected' 2>&1)
+  out=$(docker exec "$name" sh -c 'curl -s -m 10 https://am.i.mullvad.net/connected 2>/dev/null || wget -qO- -T 10 https://am.i.mullvad.net/connected' 2>&1)
   if grep -q "You are connected to Mullvad" <<<"$out"; then
     echo "OK   $name: $out"
   else
