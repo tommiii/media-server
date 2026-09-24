@@ -205,7 +205,7 @@ Notes:
 - **Plex** is the least predictable part, because its web API is not versioned like the *arr ones. The script tries the known variants for creating a library and prints what failed. Settings this Plex does not have are skipped. Hardware transcoding needs Plex Pass and a working `/dev/dri` (see 6.4, point 4): the script only flips the switch.
 - **First qBittorrent start:** if you did not set `QBITTORRENT_PASSWORD` yet, the script signs in with the temporary password and asks you to set one in `.env` and run again (it does not create the download clients until then).
 - **Changing a password later:** the apps hide stored passwords and keys, so the script cannot compare them. Change it in `.env` and run `./scripts/apply_arr_config.py --force`.
-- **Which quality gets downloaded is decided by the quality profile of *that title*.** Recyclarr creates the 1080p profiles, but a title keeps whatever profile it already has, and an old profile that allows 2160p will happily pick a 50 GB 4K release. That is why the script (`assign_to_existing: without_files` in `config/arr.yml`) puts the Recyclarr profile on every title that **has no file yet**: nothing exists to be replaced, so it is safe, and it also covers movies that are missing or downloading. Titles that already have a file are left alone on purpose: a file whose quality is not in the profile counts as "upgradable" and any allowed release can replace it (the synced profiles are 1080p only, so `true`, which moves every title, would let your 2160p/remux files be replaced by smaller ones). `false` disables it. Titles you add later start with the profile selected in the app's *Add* form; the script catches them the next time it runs (see the cron line in section 7).
+- **Which quality gets downloaded is decided by the quality profile of *that title*.** Recyclarr creates the ladder profiles (*Movies - best available*, *TV - best available*), but a title keeps whatever profile it already has, and an old profile that allows everything will happily pick a 50 GB remux. That is why the script (`assign_to_existing: without_files` in `config/arr.yml`) puts the Recyclarr profile on every title that **has no file yet**: nothing exists to be replaced, so it is safe, and it also covers movies that are missing or downloading. Titles that already have a file are left alone on purpose: a file whose quality is not in the profile counts as "upgradable" and any allowed release can replace it (the ladders contain no remux, and Sonarr's stops at 1080p, so `true`, which moves every title, would let your remux and 4K series files be replaced by smaller ones). `false` disables it. Titles you add later start with the profile selected in the app's *Add* form; the script catches them the next time it runs (see the cron line in section 7).
 
 ### Open the Plex port on your router
 
@@ -314,7 +314,7 @@ docker compose exec recyclarr recyclarr sync               # first sync, now (th
 ./scripts/apply_download_safety.py                         # apply them
 ```
 
-- **Recyclarr** reads `config/recyclarr/configs/media.yml` (in this repo, mounted read-only). It also sets the per-quality **size limits** ([File size](#file-size-what-is-configured)). It creates the TRaSH profiles **WEB-1080p** (Sonarr) and **HD Bluray + WEB** (Radarr) with their custom formats. It does not touch your existing profiles or titles (see the warning in 6.0). For 2160p, remux or anime, take another template from https://github.com/recyclarr/config-templates and put it in `config/recyclarr/configs/`.
+- **Recyclarr** reads `config/recyclarr/configs/media.yml` (in this repo, mounted read-only). It also sets the per-quality **size limits** ([File size](#file-size-what-is-configured)). It creates the quality profiles **Movies - best available** (Radarr) and **TV - best available** (Sonarr): TRaSH's profiles with their custom formats and scores, renamed and with the quality ladder of [How a release is chosen](#how-a-release-is-chosen-and-what-to-do-when-a-download-crawls). It does not touch your existing profiles or titles (see the warning in 6.0). For 2160p, remux or anime, take another template from https://github.com/recyclarr/config-templates and put it in `config/recyclarr/configs/`.
 - **`apply_download_safety.py`** (file filters and the Radarr size ceiling) is idempotent: run it again whenever Prowlarr adds indexers to Sonarr/Radarr (the setting it enforces is per indexer, see below).
 
 ## Fake releases, executables and archives: how downloads are controlled
@@ -347,14 +347,19 @@ Radarr and Sonarr judge a release by **MB per minute of runtime, per quality** (
 | Quality | Radarr: preferred / max (120 min film) | Sonarr: preferred / max (45 min episode) |
 |---|---|---|
 | WEB-DL / WEBRip 1080p | 3.6 GB / 7.2 GB | 1.1 GB / 2.7 GB |
-| Bluray 1080p | 8.4 GB / 13 GB | 2.7 GB / 4.5 GB |
+| Bluray 1080p | 8.4 GB / 13 GB (min 2.4 GB) | 2.7 GB / 4.5 GB (min 1.1 GB) |
+| WEB-DL / WEBRip 720p | 1.8 GB / 4.8 GB (min 0.7 GB) | 0.5 GB / 1.4 GB (min 0.2 GB) |
+| Bluray 720p | 3.6 GB / 7.2 GB (min 1 GB) | 1.1 GB / 2.3 GB (min 0.4 GB) |
 | WEB-DL / WEBRip 2160p | 12 GB / 19 GB | 2.7 GB / 6.8 GB |
-| Bluray 2160p | 18 GB / 24 GB | 5.4 GB / 9 GB |
+| Bluray 2160p | 18 GB / 24 GB (min 7 GB) | 5.4 GB / 9 GB |
 | Remux (1080p and 2160p) | never fits (cap ≈ minimum) | never fits |
+| 480p (WEB, Bluray, DVD, SDTV) | not managed by TRaSH: the apps' own defaults apply | same |
+
+The minimums of the fallback qualities are lower than TRaSH's on purpose (Bluray 1080p 20 instead of 50.8 MB/min, 720p 5–8 instead of 10–25), so that the small releases which really exist can be chosen when the big ones lack seeders. Fakes stay far below any minimum.
 
 What you can turn, from the biggest effect to the smallest:
 
-1. **Which qualities are allowed at all** (quality profile). The synced profiles (*WEB-1080p*, *HD Bluray + WEB*) are 1080p only, so no 4K and no remux. For 4K, add the `uhd-bluray-web` (Radarr) / `web-2160p` (Sonarr) template from https://github.com/recyclarr/config-templates and assign it only to the titles you want in 4K. The 2160p caps above already apply to any profile.
+1. **Which qualities are allowed at all, and in which order** (`qualities` of each profile in `config/recyclarr/configs/media.yml`). Movies: Bluray/4K down to 480p, no remux. Series: 1080p down to 480p, no 4K. To drop a rung, remove it from the list (mind that a quality missing from a profile counts as "upgradable" for files already having it).
 2. **Per-quality size limits**: edit `preferred` / `max` in `media.yml`, then `docker compose exec recyclarr recyclarr sync`. The formula is `MB/min × runtime`. `min` is left at TRaSH's value, which rejects very small encodes (Bluray 1080p under ~6 GB per 2 h film, WEB-DL under ~1.5 GB). If you like 2–3 GB encodes tagged Bluray, lower `min` for `Bluray-1080p` (e.g. 20): expect lower quality.
 3. **A hard ceiling per release** in Radarr: 25 GB (`MAX_RELEASE_MB` in `apply_download_safety.py`, shown in Radarr under *Settings → Indexers → Maximum Size*). It also catches releases with a wrong or unknown quality label. Sonarr has none on purpose, because it would reject season packs.
 4. **Smaller codec (x265)**. TRaSH's *Golden Rule HD* prefers x264 at 1080p because x265 is often a lower-quality re-encode. If you want smaller files and your players decode HEVC, in the Radarr *Golden Rule HD* group of `media.yml` set:
@@ -395,6 +400,15 @@ Sonarr and Radarr first drop the releases that fail the rules (wrong quality, ou
 | 3 | Indexer priority | One number per indexer in Prowlarr (Sonarr also prefers season packs here) |
 | 4 | **Seeders**, then peers | On a logarithmic scale: 1–9, 10–99 and 100+ seeders are three bands, 20 and 90 are equal |
 | 5 | **Size** | Closest to the `preferred` size of `config/recyclarr/configs/media.yml`, in bands of 200 MB |
+
+**The quality ladder.** Because *quality comes first*, the profile is an ordered list and the search walks down it. A release is only a candidate if it has enough seeders (`minimum_seeders`), so "best quality with good seeds, otherwise the next one down" is exactly what happens:
+
+| | Order (best first) | Stops upgrading at |
+|---|---|---|
+| **Movies** (Radarr, *Movies - best available*) | Bluray 2160p → WEB 2160p → Bluray 1080p → WEB 1080p → Bluray 720p → WEB 720p → WEB 480p → Bluray 480p → DVD | Bluray 2160p |
+| **Series** (Sonarr, *TV - best available*) | WEB 1080p → Bluray 1080p → HDTV 1080p → WEB 720p → Bluray 720p → HDTV 720p → WEB 480p → Bluray 480p → DVD → SDTV | WEB 1080p |
+
+Nothing is refused for being "too low" as long as it is on the list and has seeders: a 720p with 60 seeders is taken over a 1080p with 2. If a better quality shows up later, the title is upgraded until the cutoff. Change the order or remove rungs in `config/recyclarr/configs/media.yml`, then `docker compose exec recyclarr recyclarr sync`. Titles that already have a profile keep it (see 6.0); the ladder applies to titles without a file and to new ones.
 
 So seeders never outweigh quality: a better release with 2 seeders beats a slightly worse one with 500. What protects you from dead torrents is the **minimum seeders** rule (`minimum_seeders` in `config/arr.yml`, default 5): a release below it is rejected and the next best one is used. It is set once in Prowlarr's app profile and reaches every indexer (an indexer with its own minimum keeps it). The first acceptable release is grabbed immediately; if a better one shows up later and the quality cutoff is not reached yet, it is upgraded.
 

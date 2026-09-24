@@ -23,7 +23,9 @@ sonarr:
 
     quality_definition:
       type: series
-      # MB/min per episode (45 min episode: 60 -> 2.7 GB, 100 -> 4.5 GB, 150 -> 6.7 GB). `min` stays at TRaSH's value.
+      # MB/min per episode (45 min episode: 60 -> 2.7 GB, 100 -> 4.5 GB, 150 -> 6.7 GB).
+      # `min` stays at TRaSH's value except where noted: the fallback qualities (720p, Bluray-1080p) must accept the
+      # small releases that really exist, while still rejecting the tiny fakes (a 3 MB "episode" is far below any min).
       qualities:
         - name: WEBDL-1080p
           preferred: 25
@@ -32,8 +34,28 @@ sonarr:
           preferred: 25
           max: 60
         - name: Bluray-1080p
+          min: 25                        # TRaSH: 50.4
           preferred: 60
           max: 100
+        - name: HDTV-1080p
+          preferred: 25
+          max: 60
+        - name: WEBDL-720p
+          min: 5                         # TRaSH: 10
+          preferred: 12
+          max: 30
+        - name: WEBRip-720p
+          min: 5                         # TRaSH: 10
+          preferred: 12
+          max: 30
+        - name: Bluray-720p
+          min: 8                         # TRaSH: 17.1
+          preferred: 25
+          max: 50
+        - name: HDTV-720p
+          min: 5                         # TRaSH: 10
+          preferred: 15
+          max: 35
         - name: Bluray-1080p Remux
           preferred: 75
           max: 100
@@ -54,7 +76,28 @@ sonarr:
           max: 200
 
     quality_profiles:
+      # Based on TRaSH's WEB-1080p profile (keeps its custom formats and scores), renamed, with our own ladder.
+      # Qualities are tried in this order: the FIRST one that has a release with enough seeders
+      # (minimum_seeders in config/arr.yml) wins; the custom format scores only break ties within a quality.
       - trash_id: 72dae194fc92bf828f32cde7744e51a1 # WEB-1080p
+        name: TV - best available
+        upgrade:
+          allowed: true
+          until_quality: WEB 1080p       # once an episode is 1080p WEB it is not replaced any more
+        qualities:
+          - name: WEB 1080p
+            qualities: [WEBDL-1080p, WEBRip-1080p]
+          - name: Bluray-1080p
+          - name: HDTV-1080p
+          - name: WEB 720p
+            qualities: [WEBDL-720p, WEBRip-720p]
+          - name: Bluray-720p
+          - name: HDTV-720p
+          - name: WEB 480p
+            qualities: [WEBDL-480p, WEBRip-480p]
+          - name: Bluray-480p
+          - name: DVD
+          - name: SDTV
         reset_unmatched_scores:
           enabled: true
 
@@ -80,7 +123,9 @@ radarr:
     quality_definition:
       type: movie
       # MB/min (120 min film: 30 -> 3.6 GB, 60 -> 7.2 GB, 110 -> 13 GB, 160 -> 19 GB, 200 -> 24 GB).
-      # `min` stays at TRaSH's value. Remux caps sit just above their minimum, so remuxes never fit (>40 GB).
+      # `min` stays at TRaSH's value except where noted, so that the fallback qualities accept the small releases that
+      # really exist (a 1 GB 720p film) while the tiny fakes stay far below any min. Remux caps sit just above their
+      # minimum, so remuxes never fit (>40 GB).
       qualities:
         - name: WEBDL-1080p
           preferred: 30
@@ -89,8 +134,21 @@ radarr:
           preferred: 30
           max: 60
         - name: Bluray-1080p
+          min: 20                        # TRaSH: 50.8
           preferred: 70
           max: 110
+        - name: WEBDL-720p
+          min: 6                         # TRaSH: 12.5
+          preferred: 15
+          max: 40
+        - name: WEBRip-720p
+          min: 6                         # TRaSH: 12.5
+          preferred: 15
+          max: 40
+        - name: Bluray-720p
+          min: 8                         # TRaSH: 25.7
+          preferred: 30
+          max: 60
         - name: Remux-1080p
           preferred: 105
           max: 110
@@ -104,6 +162,7 @@ radarr:
           preferred: 100
           max: 160
         - name: Bluray-2160p
+          min: 60                        # TRaSH: 102
           preferred: 150
           max: 200
         - name: Remux-2160p
@@ -111,7 +170,28 @@ radarr:
           max: 200
 
     quality_profiles:
+      # Based on TRaSH's HD Bluray + WEB profile (keeps its custom formats and scores), renamed, with our own ladder:
+      # Bluray/4K first, then 1080p, 720p and 480p. The FIRST quality that has a release with enough seeders
+      # (minimum_seeders in config/arr.yml) wins; custom format scores only break ties within a quality.
       - trash_id: d1d67249d3890e49bc12e275d989a7e9 # HD Bluray + WEB
+        name: Movies - best available
+        upgrade:
+          allowed: true
+          until_quality: Bluray-2160p    # a movie keeps being upgraded until it is a 4K Bluray
+        qualities:
+          - name: Bluray-2160p
+          - name: WEB 2160p
+            qualities: [WEBDL-2160p, WEBRip-2160p]
+          - name: Bluray-1080p
+          - name: WEB 1080p
+            qualities: [WEBDL-1080p, WEBRip-1080p]
+          - name: Bluray-720p
+          - name: WEB 720p
+            qualities: [WEBDL-720p, WEBRip-720p]
+          - name: WEB 480p
+            qualities: [WEBDL-480p, WEBRip-480p]
+          - name: Bluray-480p
+          - name: DVD
         reset_unmatched_scores:
           enabled: true
 

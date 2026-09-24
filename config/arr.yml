@@ -47,12 +47,12 @@ sonarr:
     grace_days: 0                    # 0 = published at or after the air date; negative allows earlier, positive waits
     ignored: []                      # optional: words or /regex/ in a release title that reject it (careful: titles too)
   quality_profile:                   # created by Recyclarr (config/recyclarr/configs/media.yml)
-    name: WEB-1080p
+    name: TV - best available         # 1080p, then 720p, then 480p (see config/recyclarr/configs/media.yml)
     # Which titles already in Sonarr get this profile:
     #   without_files = only those with no file yet (nothing to replace: safe, and what makes new/missing titles
     #                   follow this profile instead of an old one that allows 2160p). Re-run to catch new ones.
     #   true          = every title. DANGER: a file whose quality is not in the profile counts as "upgradable", so
-    #                   any release the profile allows may replace it (this profile is 1080p only).
+    #                   any release the profile allows may replace it (remuxes are not in the profile, and Sonarr's stops at 1080p).
     #   false         = none.
     assign_to_existing: without_files
   remove_download_clients:           # leftovers from the previous setup
@@ -68,7 +68,7 @@ radarr:
     port: 8080
     category: movies
   quality_profile:
-    name: HD Bluray + WEB
+    name: Movies - best available     # Bluray/4K, then 1080p, 720p, 480p (see config/recyclarr/configs/media.yml)
     assign_to_existing: without_files   # same options and warning as in the sonarr section
   remove_download_clients:
     - Deluge
