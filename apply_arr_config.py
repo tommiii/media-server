@@ -17,8 +17,9 @@ What it does, in this order
      connection), removes leftover clients (e.g. Deluge).
   4. Prowlarr: login, FlareSolverr proxy + tag, the indexers listed in arr.yml (the app tests each
      one), links to Sonarr and Radarr.
-  5. Sonarr/Radarr: assigns the quality profile Recyclarr created to the existing series/movies
-     (run it again after `recyclarr sync`; ./setup.sh does the whole sequence).
+  5. Sonarr/Radarr: optionally assigns the quality profile Recyclarr created to the existing
+     series/movies (assign_to_existing in arr.yml, OFF by default: it can make the apps replace files
+     whose quality the profile does not allow).
   6. Plex: reads its token from Preferences.xml, sets the preferences and creates the libraries
      listed in arr.yml. Best effort: Plex's API is not versioned like the *arr ones.
 It waits for each service to answer before talking to it.

@@ -144,7 +144,7 @@ Everything is configured **from files**, without opening the UIs: `arr.yml` desc
 | `apply_arr_config.py` | See the table below |
 | Recreate | Containers that read the new API keys (Homepage, Recyclarr) |
 | Recyclarr | Syncs the TRaSH quality profiles, custom formats and size limits |
-| `apply_arr_config.py` again | Assigns the Recyclarr profiles to the series/movies you already have |
+| `apply_arr_config.py` again | Assigns the Recyclarr profiles to existing titles **only if you enable `assign_to_existing`** (off by default, see below) |
 | `apply_download_safety.py` | File filters (executables) and size ceiling |
 | `check_vpn_connection.sh` | Verifies that everything goes through Mullvad |
 
@@ -154,7 +154,7 @@ What `apply_arr_config.py` does (`--check` shows it without changing anything):
 |---|---|
 | API keys | Reads the Sonarr, Radarr and Prowlarr keys from their `config.xml` and the Plex token from `Preferences.xml`, and writes them into `.env` if empty (Homepage and Recyclarr use them) |
 | qBittorrent | Signs in (on the first start with the temporary password from `docker logs`), sets your web UI login, `save_path=/data/downloads`, UPnP off, network interface `tun0`, and generates an API key into `.env` |
-| Sonarr / Radarr | Forms login (always required), hardlinks on, root folders, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), removes the old Deluge client, assigns the Recyclarr quality profile to existing titles |
+| Sonarr / Radarr | Forms login (always required), hardlinks on, root folders, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), removes the old Deluge client |
 | Prowlarr | Forms login, FlareSolverr proxy with tag `flaresolverr`, **the indexers listed in `arr.yml`** (Prowlarr tests each one), links to Sonarr and Radarr (full sync, so the indexers reach both) |
 | Plex | Sets *Custom server access URLs* and *LAN Networks* (your subnets, Tailscale included), turns Remote Access off, creates the *Movies* and *TV Shows* libraries |
 
@@ -165,7 +165,7 @@ Notes:
 - **Plex** is the least predictable part, because its web API is not versioned like the *arr ones. The script tries the known variants for creating a library and prints what failed. Settings this Plex does not have are skipped. The Plex hardware transcoding switch (Plex Pass) is left to you: *Settings → Transcoder*.
 - **First qBittorrent start:** if you did not set `QBITTORRENT_PASSWORD` yet, the script signs in with the temporary password and asks you to set one in `.env` and run again (it does not create the download clients until then).
 - **Changing a password later:** the apps hide stored passwords and keys, so the script cannot compare them. Change it in `.env` and run `./apply_arr_config.py --force`.
-- **Quality profiles:** a new series/movie you add later uses the profile preselected in the app's *Add* form (a browser-side setting). The script only assigns profiles to titles that already exist; re-run it after adding many.
+- **Quality profiles and your existing library:** Recyclarr creates the profiles, but the script does **not** move your existing titles to them unless you set `assign_to_existing: true` in `arr.yml`. Be careful: a file whose quality is not allowed by the profile counts as "upgradable" and any allowed release can replace it. The synced profiles are 1080p only, so enabling it would let your existing 2160p/remux files be replaced by smaller ones. Enable it only if everything you own already fits the profile (or use a 2160p profile from Recyclarr's templates). New titles use the profile you pick in the app's *Add* form.
 
 ### 6.1 qBittorrent by hand — `http://<LAN_IP>:8080`
 

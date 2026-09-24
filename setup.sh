@@ -46,7 +46,7 @@ run docker compose up -d
 step "Recyclarr: quality profiles, custom formats and size limits"
 run docker compose exec -T recyclarr recyclarr sync
 
-step "Assigning those profiles to the titles you already have"
+step "Assigning the profiles (only where assign_to_existing is true in arr.yml; default: no)"
 run ./apply_arr_config.py
 
 step "File filters (executables are rejected) and size ceiling"

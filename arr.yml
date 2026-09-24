@@ -29,7 +29,10 @@ sonarr:
     category: tv
   quality_profile:                   # created by Recyclarr (recyclarr/configs/media.yml)
     name: WEB-1080p
-    assign_to_existing: true         # put every series already in Sonarr on it
+    # DANGER when true: a file whose quality is not in the profile counts as "upgradable", so any release the
+    # profile allows may replace it. This profile is 1080p only: with true, your existing 2160p/remux files
+    # could be replaced by smaller ones. Leave false unless every existing file already fits the profile.
+    assign_to_existing: false
   remove_download_clients:           # leftovers from the previous setup
     - Deluge
 
@@ -44,7 +47,7 @@ radarr:
     category: movies
   quality_profile:
     name: HD Bluray + WEB
-    assign_to_existing: true
+    assign_to_existing: false        # same warning as in the sonarr section
   remove_download_clients:
     - Deluge
 
