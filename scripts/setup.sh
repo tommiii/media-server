@@ -64,6 +64,9 @@ run ./scripts/leak_test.sh
 step "Hardlinks: is deleting finished downloads safe for the library?"
 run ./scripts/check_hardlinks.sh
 
+step "Daily job (your crontab, 04:30): remove duplicate downloads"
+run ./scripts/cron.sh install
+
 echo
 echo "Reminder: for Plex to work from outside your home, forward TCP port 32400 on your router to this server"
 echo "(README: 'Open the Plex port on your router'). Only the router can do that."

@@ -36,7 +36,8 @@ compose.yml            the stack (containers, networks, ports)
 .env.sample            copy to .env and fill in (never committed)
 renovate.json          image update pull requests
 scripts/               setup.sh (one command for everything), apply_arr_config.py, apply_download_safety.py,
-                       leak_test.sh, check_hardlinks.sh
+                       leak_test.sh, check_hardlinks.sh,
+                       dedupe_downloads.py, cron.sh
 config/
   arr.yml              desired state of qBittorrent, Sonarr, Radarr, Prowlarr (indexers) and Plex
   recyclarr/           quality profiles and size limits (TRaSH)
@@ -374,6 +375,27 @@ What you can turn, from the biggest effect to the smallest:
 
 Files you already have are not touched. Rejections show up in *Interactive Search* and in the app logs; the ceiling is checked at grab time, before anything is sent to qBittorrent.
 
+## Duplicate downloads: one version is enough
+
+Two torrents for the same episodes or movie can be running at once, for three reasons: you added one **by hand** to qBittorrent (Sonarr/Radarr do not know about it and grab their own), Sonarr grabbed a **better** release while the first was still downloading (it counts as an upgrade), or a season pack and single episodes overlap. A daily job cleans this up (`./scripts/dedupe_downloads.py`, installed in **your crontab** at 04:30 by `setup.sh`; log in `$BASE_DIR/services/dedupe.log`).
+
+How it decides, so that it never removes the wrong thing:
+
+- It looks only at **unfinished** torrents. Each one becomes the set of episodes (or the movie) it will deliver: from the Sonarr/Radarr queue for what they grabbed, and from Sonarr/Radarr's own title parser for what you added by hand.
+- Downloads are ranked by **quality in the title's quality profile (the ladder)**, then by number of episodes, then by progress. Going down the list, a download is kept if it brings at least one episode the better ones do not; otherwise it is a duplicate. A season pack is never removed because of one episode, and nothing is removed unless better downloads already deliver *every* episode it would.
+- A duplicate that is already **90 % done is left to finish** (`--min-progress`).
+- Removal: Sonarr/Radarr downloads go through their queue (no blocklist, no new search); manual torrents are deleted from qBittorrent with their files. **`--keep-manual` never touches manual torrents** (set `DEDUPE_ARGS=--keep-manual` in `.env` and re-run `./scripts/cron.sh install`).
+
+Try it without changing anything, whenever you like:
+
+```bash
+./scripts/dedupe_downloads.py            # "WOULD REMOVE ..." / "KEEP ...", nothing is changed
+./scripts/dedupe_downloads.py --apply    # do it now
+./scripts/cron.sh show                   # is the daily job installed?  (./scripts/cron.sh remove takes it out)
+```
+
+Limits: it removes duplicates, it does not prevent them. To avoid the first cause, add series through Sonarr and films through Radarr instead of adding torrents by hand. A torrent it cannot recognise (a name Sonarr/Radarr cannot parse) is left alone.
+
 ## Clean-up: finished downloads are deleted after 3 days, the library keeps its files
 
 qBittorrent deletes a torrent **and its files** by itself once it has **seeded for 3 days after finishing** (`cleanup: delete_after_seeding_days: 3` in `config/arr.yml`; the time counts from completion, not from when you added it). Plex keeps its copy because of **hardlinks**: when Sonarr/Radarr import a file, `media/...` gets a second name for the *same data* as `downloads/complete/...` instead of a copy. Deleting one name leaves the data reachable through the other, so what Plex plays stays. It also means seeding costs no extra disk space.
@@ -445,6 +467,7 @@ curl -s -X DELETE -H "X-Api-Key: $RADARR_API_KEY" "http://$LAN_IP:7878/api/v3/qu
 docker compose ps                                # status
 docker compose logs -f gluetun                   # VPN logs
 ./scripts/leak_test.sh                           # does everything that downloads go through the VPN? (--kill-switch: also cut the tunnel)
+./scripts/dedupe_downloads.py                    # two versions of the same download? (--apply removes them; runs daily from cron)
 ./scripts/check_hardlinks.sh                     # are hardlinks in place, which finished downloads are not linked to the library? (nobody runs it for you)
 ./scripts/setup.sh                               # bring everything to the state described in config/arr.yml (safe to repeat)
 ./scripts/apply_arr_config.py --check            # is the *arr setup still what config/arr.yml says? (changes nothing)
