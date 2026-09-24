@@ -1,0 +1,53 @@
+# {{HOMEPAGE_VAR_*}} values come from .env via compose.yml.
+# Behind-the-VPN services are reached as gluetun:<port> (same Docker network); links open on the LAN IP.
+
+- Media:
+    - Plex:
+        icon: plex.svg
+        href: http://{{HOMEPAGE_VAR_LAN_IP}}:32400/web
+        description: Streaming
+        siteMonitor: http://plex:32400/identity
+        widget:
+          type: plex
+          url: http://plex:32400
+          key: "{{HOMEPAGE_VAR_PLEX_TOKEN}}"
+
+- Downloads:
+    - qBittorrent:
+        icon: qbittorrent.svg
+        href: http://{{HOMEPAGE_VAR_LAN_IP}}:8080
+        description: Torrents (VPN)
+        siteMonitor: http://gluetun:8080
+        widget:
+          type: qbittorrent
+          url: http://gluetun:8080
+          key: "{{HOMEPAGE_VAR_QBITTORRENT_KEY}}"
+    - Sonarr:
+        icon: sonarr.svg
+        href: http://{{HOMEPAGE_VAR_LAN_IP}}:8989
+        description: TV (VPN)
+        siteMonitor: http://gluetun:8989
+        widget:
+          type: sonarr
+          url: http://gluetun:8989
+          key: "{{HOMEPAGE_VAR_SONARR_KEY}}"
+          enableQueue: true
+    - Radarr:
+        icon: radarr.svg
+        href: http://{{HOMEPAGE_VAR_LAN_IP}}:7878
+        description: Movies (VPN)
+        siteMonitor: http://gluetun:7878
+        widget:
+          type: radarr
+          url: http://gluetun:7878
+          key: "{{HOMEPAGE_VAR_RADARR_KEY}}"
+          enableQueue: true
+    - Prowlarr:
+        icon: prowlarr.svg
+        href: http://{{HOMEPAGE_VAR_LAN_IP}}:9696
+        description: Indexers (VPN)
+        siteMonitor: http://gluetun:9696
+        widget:
+          type: prowlarr
+          url: http://gluetun:9696
+          key: "{{HOMEPAGE_VAR_PROWLARR_KEY}}"

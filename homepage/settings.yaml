@@ -1,0 +1,16 @@
+title: Media Server
+theme: dark
+color: slate
+headerStyle: clean
+statusStyle: dot
+hideVersion: true
+disableUpdateCheck: true
+target: _blank
+
+layout:
+  Media:
+    style: row
+    columns: 2
+  Downloads:
+    style: row
+    columns: 4
