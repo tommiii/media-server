@@ -61,6 +61,9 @@ run ./scripts/apply_download_safety.py
 step "Checking that everything goes through the VPN"
 run ./scripts/check_vpn_connection.sh
 
+step "Leak test (network namespaces, exit IP, DNS, qBittorrent interface)"
+run ./scripts/leak_test.sh
+
 echo
 echo "Reminder: for Plex to work from outside your home, forward TCP port 32400 on your router to this server"
 echo "(README: 'Open the Plex port on your router'). Only the router can do that."

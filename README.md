@@ -35,7 +35,7 @@ compose.yml            the stack (containers, networks, ports)
 .env.sample            copy to .env and fill in (never committed)
 renovate.json          image update pull requests
 scripts/               setup.sh (one command for everything), apply_arr_config.py, apply_download_safety.py,
-                       audit_media.sh, check_vpn_connection.sh, restart_services.sh
+                       audit_media.sh, check_vpn_connection.sh, leak_test.sh, restart_services.sh
 config/
   arr.yml              desired state of qBittorrent, Sonarr, Radarr, Prowlarr (indexers) and Plex
   recyclarr/           quality profiles and size limits (TRaSH)
@@ -182,7 +182,7 @@ Everything is configured **from files**, without opening the UIs: `config/arr.ym
 | Recyclarr | Syncs the TRaSH quality profiles, custom formats and size limits |
 | `apply_arr_config.py` again | Puts the Recyclarr quality profiles on the titles that have **no file yet** (see below) |
 | `apply_download_safety.py` | File filters (executables) and size ceiling |
-| `check_vpn_connection.sh` | Verifies that everything goes through Mullvad |
+| `check_vpn_connection.sh`, `leak_test.sh` | Verify that everything that searches or downloads goes through Mullvad (see the security model) |
 
 What `apply_arr_config.py` does (`--check` shows it without changing anything):
 
@@ -405,6 +405,7 @@ docker compose ps                                # status
 docker compose logs -f gluetun                   # VPN logs
 ./scripts/check_vpn_connection.sh                # is everything on the VPN?
 ./scripts/audit_media.sh                         # is everything in downloads/media really video?
+./scripts/leak_test.sh                           # does everything that downloads go through the VPN? (--kill-switch: also cut the tunnel)
 ./scripts/setup.sh                               # bring everything to the state described in config/arr.yml (safe to repeat)
 ./scripts/apply_arr_config.py --check            # is the *arr setup still what config/arr.yml says? (changes nothing)
 ./scripts/apply_download_safety.py               # re-apply file filters (after adding indexers)
@@ -453,6 +454,7 @@ Something broke? `git revert <merge commit>`, then the same command.
 - Plex and the VPN group are on separate Docker networks, so a compromised Plex cannot reach the downloader or the apps. Homepage is the only container on both (it needs to query both), with a read-only config and a login. Plex sees your media read-only.
 - All containers use `no-new-privileges`; every container except Gluetun also uses `cap_drop: ALL` (only the capabilities needed by the linuxserver init are added back). If a container refuses to start, remove `cap_drop` for that service and check `docker compose logs <service>`.
 - The Mullvad key is a Docker secret and `.env` is git-ignored.
+- **`./scripts/leak_test.sh` proves the VPN protection instead of assuming it.** It checks that every running container, except `gluetun`, `plex` and `homepage`, lives inside gluetun's network (so a service you add later without `network_mode: service:gluetun`, a second torrent client for example, is flagged as a leak *before* it matters), that the exit IP is a Mullvad server and not your home IP, that DNS goes through gluetun, and that qBittorrent is bound to `tun0`. `--kill-switch` also takes the tunnel down for a moment and checks that the torrent client is left with no connectivity at all (downloads pause for about 30 seconds). Run it after every change to `compose.yml`; `setup.sh` runs it too. What a VPN does not hide: your ISP sees that you use Mullvad (not what you download), Plex knows your library titles and watch history through your Plex account, and accounts on private trackers are yours.
 - Every web UI has a login (set from `ARR_*` / `QBITTORRENT_*` / `HOMEPAGE_AUTH_PASSWORD` in `.env`). The apps run inside the VPN but they are still reachable by anyone who can reach `LAN_IP`.
 - `services/` (each app's database and API keys) and `.env` are git-ignored: never commit them.
 
