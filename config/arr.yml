@@ -25,11 +25,11 @@ qbittorrent:
   # tracker wants a ratio or a longer seeding time.
   cleanup:
     delete_after_seeding_days: 3                # 0 = never delete anything
-    # true (recommended): after that time qBittorrent only STOPS the torrent. Sonarr/Radarr then delete it, files
-    #   included, but only if THEY imported it: a download that could not be imported is never deleted.
-    # false: qBittorrent deletes the torrent itself after that time, imported or not.
-    only_after_import: true
-    delete_files: true                          # only when only_after_import is false; false = remove the torrent, keep the files
+    # false (chosen): qBittorrent deletes the torrent AND its files by itself after that time. Plex keeps its copy because
+    #   Sonarr/Radarr import by hardlink. A download that was never imported is deleted too.
+    # true: after that time qBittorrent only STOPS the torrent; Sonarr/Radarr then delete it, but only if THEY imported it.
+    only_after_import: false
+    delete_files: true                          # only when only_after_import is false; false = remove the torrent, keep the files on disk
 
 sonarr:
   hardlinks: true                    # import by hardlink: instant, no extra disk space

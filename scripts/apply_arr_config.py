@@ -244,7 +244,7 @@ def qbittorrent(host, cfg, env):
     wanted = dict(cfg.get("preferences") or {})
     cleanup = cfg.get("cleanup") or {}
     days = cleanup.get("delete_after_seeding_days")
-    only_after_import = bool(cleanup.get("only_after_import", True))
+    only_after_import = bool(cleanup.get("only_after_import", False))
     if days is not None:  # days of seeding after completion -> qBittorrent's share limits (minutes)
         if days:
             # only_after_import: qBittorrent just STOPS the torrent (action 0); Sonarr/Radarr then delete it, files included,
