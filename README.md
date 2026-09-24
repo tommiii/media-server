@@ -103,6 +103,8 @@ Notes: Mullvad no longer supports port forwarding, so nobody can connect *in* to
 
 ## 5. Start everything
 
+> **Shortcut for steps 5 and 6: `./setup.sh`.** It starts the VPN, waits until it is healthy, starts everything else and then configures all the apps from `arr.yml` (see 6.0) without you opening a single web UI. Safe to run again. The manual steps below are the same thing written out.
+
 ```bash
 docker compose pull
 docker compose up -d
@@ -121,34 +123,49 @@ If `gluetun` is not healthy, see [Troubleshooting](#troubleshooting).
 
 ## 6. Configure the apps
 
-Everything except your indexers and Plex is configured **from a file**: `arr.yml` describes the desired state and `./apply_arr_config.py` applies it to qBittorrent, Sonarr, Radarr and Prowlarr. Sections 6.1–6.3 below describe the same settings by hand, for reference or if you prefer the UIs. What is always manual: **adding your indexers** (6.2, step 3) and Plex (6.4).
+Everything is configured **from files**, without opening the UIs: `arr.yml` describes the desired state of qBittorrent, Sonarr, Radarr, Prowlarr (indexers included) and Plex, and `./setup.sh` (or `./apply_arr_config.py` alone) applies it. Sections 6.1–6.4 describe the same settings by hand, for reference or if you prefer the UIs.
 
 ### 6.0 Automatic setup (recommended)
 
-1. In `.env` choose the logins (see the table in step 2): `ARR_USERNAME`, `ARR_PASSWORD`, `QBITTORRENT_USERNAME`, `QBITTORRENT_PASSWORD`. Leave the API key variables empty.
-2. Make sure everything is up (`docker compose ps`) and each app has been started at least once (that is when it creates its API key).
+1. In `.env` choose the logins (see the table in step 2): `ARR_USERNAME`, `ARR_PASSWORD`, `QBITTORRENT_USERNAME`, `QBITTORRENT_PASSWORD`. Leave the API key variables and `PLEX_TOKEN` empty: the script fills them in.
+2. **Plex, first time only:** if this Plex has never been linked to your account, generate a code at https://www.plex.tv/claim/ (valid 4 minutes) and put it in `PLEX_CLAIM` right before the first start. That is a login with your Plex account, so no script can do it for you. If Plex was already linked (for example it kept its old configuration in `$BASE_DIR/services/plex`), skip this.
 3. Run:
 
    ```bash
-   ./apply_arr_config.py --check    # what it would change, nothing is written
-   ./apply_arr_config.py
+   ./setup.sh
    ```
 
-What it does, in this order (safe to run again: it only changes what differs):
+`./setup.sh` does, in this order (each step only changes what differs, so run it again whenever you like):
 
 | Step | Effect |
 |---|---|
-| API keys | Reads the Sonarr, Radarr and Prowlarr keys from their `config.xml` and writes them into `.env` if empty (Homepage and Recyclarr use them) |
-| qBittorrent | Signs in (on the first start with the temporary password from `docker logs`), sets your web UI login, `save_path=/data/downloads`, UPnP off, network interface `tun0`, and generates an API key into `.env` |
-| Sonarr / Radarr | Forms login (always required), hardlinks on, root folders `/data/media/tv` / `/data/media/movies`, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), removes the old Deluge client |
-| Prowlarr | Forms login, FlareSolverr proxy with tag `flaresolverr`, links to Sonarr and Radarr (full sync) |
+| VPN | Starts Gluetun and waits until it is healthy (if it cannot connect it prints the log and stops) |
+| Start | Starts every other container |
+| `apply_arr_config.py` | See the table below |
+| Recreate | Containers that read the new API keys (Homepage, Recyclarr) |
+| Recyclarr | Syncs the TRaSH quality profiles, custom formats and size limits |
+| `apply_arr_config.py` again | Assigns the Recyclarr profiles to the series/movies you already have |
+| `apply_download_safety.py` | File filters (executables) and size ceiling |
+| `check_vpn_connection.sh` | Verifies that everything goes through Mullvad |
 
-To change a setting, edit `arr.yml` and run the script again. Passwords and keys stay in `.env`: `arr.yml` only contains `${VAR}` placeholders. If it reports a problem it says what to fix and carries on with the rest; the exit code is 1 if anything failed. If a login does not seem to apply, `docker compose restart sonarr radarr prowlarr`.
+What `apply_arr_config.py` does (`--check` shows it without changing anything):
+
+| Service | Effect |
+|---|---|
+| API keys | Reads the Sonarr, Radarr and Prowlarr keys from their `config.xml` and the Plex token from `Preferences.xml`, and writes them into `.env` if empty (Homepage and Recyclarr use them) |
+| qBittorrent | Signs in (on the first start with the temporary password from `docker logs`), sets your web UI login, `save_path=/data/downloads`, UPnP off, network interface `tun0`, and generates an API key into `.env` |
+| Sonarr / Radarr | Forms login (always required), hardlinks on, root folders, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), removes the old Deluge client, assigns the Recyclarr quality profile to existing titles |
+| Prowlarr | Forms login, FlareSolverr proxy with tag `flaresolverr`, **the indexers listed in `arr.yml`** (Prowlarr tests each one), links to Sonarr and Radarr (full sync, so the indexers reach both) |
+| Plex | Sets *Custom server access URLs* and *LAN Networks* (your subnets, Tailscale included), turns Remote Access off, creates the *Movies* and *TV Shows* libraries |
+
+To change anything, edit `arr.yml` and run the script again. Passwords and keys stay in `.env`: `arr.yml` only contains `${VAR}` placeholders. If a step reports a problem it says what to fix and carries on with the rest; the exit code is 1 if anything failed. If a login does not seem to apply, `docker compose restart sonarr radarr prowlarr`.
 
 Notes:
+- **Indexers:** `arr.yml` ships with a starter list of public trackers (YTS, EZTV, The Pirate Bay, 1337x). Edit it: the name is the *definition* in Prowlarr's indexer list. Private trackers need credentials: put them in `.env` and reference them from `arr.yml` (an example is in the file). An indexer whose site is down is reported as a problem and retried on the next run. The tag `flaresolverr` on an indexer means "solve Cloudflare with FlareSolverr".
+- **Plex** is the least predictable part, because its web API is not versioned like the *arr ones. The script tries the known variants for creating a library and prints what failed. Settings this Plex does not have are skipped. The Plex hardware transcoding switch (Plex Pass) is left to you: *Settings → Transcoder*.
 - **First qBittorrent start:** if you did not set `QBITTORRENT_PASSWORD` yet, the script signs in with the temporary password and asks you to set one in `.env` and run again (it does not create the download clients until then).
 - **Changing a password later:** the apps hide stored passwords and keys, so the script cannot compare them. Change it in `.env` and run `./apply_arr_config.py --force`.
-- Then continue with the indexers (6.2, step 3), and Plex (6.4).
+- **Quality profiles:** a new series/movie you add later uses the profile preselected in the app's *Add* form (a browser-side setting). The script only assigns profiles to titles that already exist; re-run it after adding many.
 
 ### 6.1 qBittorrent by hand — `http://<LAN_IP>:8080`
 
@@ -163,11 +180,11 @@ Notes:
 
 ### 6.2 Prowlarr by hand — `http://<LAN_IP>:9696`
 
-*(login and FlareSolverr are done by the script; adding indexers is not)*
+*(login, FlareSolverr and the indexers of `arr.yml` are done by the script)*
 
 1. On first login set authentication to *Forms* and choose a username/password (**Settings → General → Authentication**, *Required*).
 2. **Settings → Indexers → +** *FlareSolverr*: Host `http://localhost:8191`, Tags `flaresolverr`. Give that tag to the indexers that need Cloudflare solving.
-3. **Indexers → Add Indexer**: add your indexers.
+3. **Indexers → Add Indexer**: add your indexers (only needed for ones not listed in `arr.yml`).
 4. **Settings → Apps**: add Sonarr and Radarr later, after step 6.3 (you need their API keys).
 
 ### 6.3 Sonarr and Radarr by hand — `http://<LAN_IP>:8989`, `http://<LAN_IP>:7878`
@@ -196,6 +213,8 @@ paste each API key, *Test*, *Save*. Prowlarr pushes the indexers to both apps.
 
 ### 6.4 Plex — `http://<LAN_IP>:32400/web`
 
+*(libraries and network settings are done by the script; only the account link and hardware transcoding remain)*
+
 1. Because of `PLEX_CLAIM` the server is attached to your Plex account automatically. If you skipped it (or it expired), run `docker compose up -d --force-recreate plex` with a fresh token.
 2. Add libraries. Plex mounts `$DATA_DIR` read-only as `/data/media`, so the folders are:
    - TV: `/data/media/data/media/tv`
@@ -210,7 +229,7 @@ Plex needs write access only to its own config, so the media is mounted `:ro`. I
 
 The dashboard is configured **as code**: `homepage/settings.yaml`, `services.yaml` and `widgets.yaml` live in this repo and are mounted read-only, so the container cannot change them; a change is a `git commit` plus `docker compose restart homepage`. Homepage also insists on a few other, empty files (bookmarks, docker, ...): it creates them itself in `$BASE_DIR/services/homepage`, outside the repo. It has no Docker socket. You log in with `HOMEPAGE_AUTH_PASSWORD`.
 
-The links and status dots work immediately. The widgets (download queue, Plex streams, ...) need the credentials below in `.env`. `./apply_arr_config.py` (6.0) has already filled the first four; only `PLEX_TOKEN` is manual. Then recreate the container:
+The links and status dots work immediately. The widgets (download queue, Plex streams, ...) need the credentials below in `.env`. `./apply_arr_config.py` (6.0) has already filled all of them, `PLEX_TOKEN` included. Then recreate the container:
 
 | `.env` variable | Where to find it |
 |---|---|
@@ -291,7 +310,8 @@ docker compose ps                    # status
 docker compose logs -f gluetun       # VPN logs
 ./check_vpn_connection.sh            # is everything on the VPN?
 ./audit_media.sh                     # is everything in downloads/media really video?
-./apply_arr_config.py --check        # is the *arr setup still what arr.yml says?
+./setup.sh                           # bring everything to the state described in arr.yml (safe to repeat)
+./apply_arr_config.py --check        # is the *arr setup still what arr.yml says? (changes nothing)
 ./apply_download_safety.py           # re-apply file filters (after adding indexers)
 ./restart_services.sh                # pull + recreate everything
 ```
@@ -349,6 +369,10 @@ Something broke? `git revert <merge commit>`, then the same command.
 | Sonarr/Radarr metadata (TVDB/TMDB) errors | Rarely, a service blocks VPN IPs. Try another `VPN_COUNTRIES`; as a last resort Sonarr/Radarr can be moved out of the VPN (this lowers protection, so keep indexers only in Prowlarr) |
 | Homepage: `Host validation failed` | The address you type in the browser must be in `HOMEPAGE_ALLOWED_HOSTS` (default: `LAN_IP`). Add other names with `HOMEPAGE_ALLOWED_HOSTS=192.168.1.10,server.tailnet.ts.net` in `.env` |
 | Homepage widgets show errors or no numbers | The matching key in `.env` is empty or wrong (6.5); run `docker compose up -d homepage` after editing `.env` |
+| `setup.sh` stops at *gluetun is 'starting'* | The VPN does not connect: Mullvad key and address must be a matching pair (step 4) |
+| `apply_arr_config.py`: `indexer ...: Unable to connect` | The tracker's site is down or blocks the exit IP (or needs FlareSolverr: give it `tags: [flaresolverr]`). It is retried on every run; try another `VPN_COUNTRIES` or remove it from `arr.yml` |
+| `apply_arr_config.py`: Plex `not linked to a Plex account` | Put a fresh `PLEX_CLAIM` in `.env`, `docker compose up -d --force-recreate plex`, run `./setup.sh` again |
+| `apply_arr_config.py`: Plex `library ...: HTTP 4xx` | Plex rejected every known way of creating a library. Create it once by hand (Plex web UI) and the script leaves it alone from then on |
 | `apply_arr_config.py`: `PyYAML is required` | `sudo apt install python3-yaml` |
 | `apply_arr_config.py`: `cannot sign in` to qBittorrent | `QBITTORRENT_USERNAME`/`QBITTORRENT_PASSWORD` in `.env` must be the web UI credentials. If it never had a password, `docker compose restart qbittorrent` gives a new temporary one (the script picks it up from `docker logs`). Too many failed logins ban the address for a while: a restart clears it |
 | `apply_arr_config.py`: `no API key for sonarr` | The app has not started yet or its `config.xml` is not in `$BASE_DIR/services/<app>/`. Check `docker compose ps` and that `BASE_DIR` in `.env` is an absolute path |
