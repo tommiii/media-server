@@ -78,10 +78,12 @@ prowlarr:
       tags: [flaresolverr]
 
 plex:
-  preferences:                       # ids as listed by Plex itself; unknown ones are skipped
-    customConnections: http://${LAN_IP}:32400   # Settings > Network > Custom server access URLs
-    LanNetworksBandwidth: ${LAN_SUBNETS}        # Settings > Network > LAN Networks (Tailscale counts as local)
-    PublishServerOnPlexOnlineKey: false         # Remote Access off: you use Tailscale
+  preferences:                       # ids as listed by Plex itself; unknown ones are skipped, empty values are ignored
+    PublishServerOnPlexOnlineKey: true          # Settings > Remote Access: on
+    ManualPortMappingMode: true                 # ...with a manually forwarded port (UPnP cannot work from inside Docker)
+    ManualPortMappingPort: 32400                # the public TCP port you forward on the router to this server
+    LanNetworksBandwidth: ${LAN_SUBNETS}        # Settings > Network > LAN Networks: treated as local (put your home subnet here too)
+    customConnections: ${PLEX_CUSTOM_URLS:-}    # extra URLs Plex advertises: Tailscale address, a DDNS name (comma separated)
   libraries:                         # Plex mounts $DATA_DIR at /data/media, hence the doubled "data/media"
     - {name: Movies, type: movie, path: /data/media/data/media/movies}
     - {name: TV Shows, type: show, path: /data/media/data/media/tv-shows}

@@ -185,7 +185,10 @@ services:
     tmpfs:
       - /transcode:size=6G
     ports:
-      - ${LAN_IP}:32400:32400/tcp
+      # Plex is meant to be reachable from outside (router port forward TCP 32400 -> this server), so unlike
+      # the UIs it is not tied to LAN_IP. 0.0.0.0 = IPv4 only, on purpose: Docker would also open [::] otherwise.
+      # Set PLEX_BIND_IP in .env to a single address to restrict it (e.g. only the Tailscale address).
+      - ${PLEX_BIND_IP:-0.0.0.0}:32400:32400/tcp
     networks:
       - plex_net
     restart: *restart

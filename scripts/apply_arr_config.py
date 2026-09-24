@@ -551,6 +551,8 @@ def plex(host, cfg, env):
     norm = lambda v: str(int(v)) if isinstance(v, bool) else str(v)
     diff = {}
     for key, value in wanted.items():
+        if value == "":
+            continue  # e.g. ${PLEX_CUSTOM_URLS:-} left empty: do not overwrite what Plex has
         if key not in settings:
             print(f"  preference {key}: skipped (this Plex has no such setting)")
         elif norm(settings[key]) != norm(value):

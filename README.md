@@ -11,7 +11,7 @@ Self-hosted media server where **everything that searches or downloads runs behi
 | Sonarr | TV automation | ✅ | `http://<LAN_IP>:8989` |
 | Radarr | Movie automation | ✅ | `http://<LAN_IP>:7878` |
 | Recyclarr | Keeps quality profiles / custom formats in sync (TRaSH Guides) | ✅ | – |
-| Plex | Media streaming | ❌ | `http://<LAN_IP>:32400/web` |
+| Plex | Media streaming, **reachable from the internet** (router port forward) | ❌ | `http://<any server address>:32400/web` |
 | Homepage | Dashboard with widgets (login required) | ❌ | `http://<LAN_IP>` |
 
 Prowlarr, FlareSolverr, Sonarr, Radarr and qBittorrent share Gluetun's network namespace: they have no network interface other than the VPN tunnel, so if the tunnel drops they simply have no connection (no leak). That is also why they talk to each other on `localhost`.
@@ -50,6 +50,7 @@ All scripts can be run from any directory; they find the repository root themsel
 - `/dev/net/tun` on the host (`ls /dev/net/tun`; if missing: `sudo modprobe tun`).
 - A **fixed LAN IP** for the server (set a DHCP reservation on your router). The UIs are bound to that address; if it changes, the containers will not start.
 - A [Mullvad](https://mullvad.net) account.
+- To use Plex from outside your home: a router port forward of **TCP 32400** to the server, and an ISP that gives you a reachable public IPv4 (not CGNAT).
 - `python3` with PyYAML for the setup script: `sudo apt install python3-yaml`.
 - Optional: an Intel GPU (`/dev/dri`) for Plex hardware transcoding (needs Plex Pass). No GPU? Remove the `devices:` block of `plex` in `compose.yml`.
 
@@ -82,7 +83,7 @@ Edit `.env`:
 
 Put values that contain spaces, `$` or `#` in single quotes, e.g. `ARR_PASSWORD='my pass#1'`: the file is read by Docker Compose, by the shell (step 3) and by the scripts.
 
-> Tailscale/remote access: `LAN_IP` limits where ports are published. If you reach the server through its Tailscale IP, set `LAN_IP` to the Tailscale IP of the server (or `0.0.0.0` if the host firewall already restricts access) **and** add `100.64.0.0/10` to `LAN_SUBNETS`.
+> Tailscale/remote access: `LAN_IP` limits where the **web UIs** are published (Plex is different: it is published on every IPv4 address so it can be reached from the internet, see `PLEX_BIND_IP` in `.env.sample`). If you reach the server through its Tailscale IP, set `LAN_IP` to the Tailscale IP of the server (or `0.0.0.0` if the host firewall already restricts access) **and** add `100.64.0.0/10` to `LAN_SUBNETS`. Put your home subnet in `LAN_SUBNETS` too (e.g. `192.168.1.0/24,100.64.0.0/10`): Plex uses that list as its *LAN Networks*, so clients at home and on Tailscale count as local.
 
 ## 3. Create folders (do this before the first start)
 
@@ -190,7 +191,7 @@ What `apply_arr_config.py` does (`--check` shows it without changing anything):
 | qBittorrent | Signs in (on the first start with the temporary password from `docker logs`), sets your web UI login, finished downloads in `/data/downloads/complete` and unfinished ones in `/data/downloads/incomplete` (partial files get a `.!qB` extension), UPnP off, network interface `tun0`, and generates an API key into `.env` |
 | Sonarr / Radarr | Forms login (always required), hardlinks on, root folders, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), removes the old Deluge client |
 | Prowlarr | Forms login, FlareSolverr proxy with tag `flaresolverr`, **the indexers listed in `config/arr.yml`** (Prowlarr tests each one), links to Sonarr and Radarr (full sync, so the indexers reach both) |
-| Plex | Sets *Custom server access URLs* and *LAN Networks* (your subnets, Tailscale included), turns Remote Access off, creates the *Movies* and *TV Shows* libraries |
+| Plex | Turns *Remote Access* on with a manually forwarded port (32400), sets *LAN Networks* (your `LAN_SUBNETS`), adds the URLs of `PLEX_CUSTOM_URLS` if you set it, creates the *Movies* and *TV Shows* libraries |
 
 To change anything, edit `config/arr.yml` and run the script again. Passwords and keys stay in `.env`: `config/arr.yml` only contains `${VAR}` placeholders. If a step reports a problem it says what to fix and carries on with the rest; the exit code is 1 if anything failed. If a login does not seem to apply, `docker compose restart sonarr radarr prowlarr`.
 
@@ -245,19 +246,21 @@ Back in Prowlarr → **Settings → Apps → +**:
 
 paste each API key, *Test*, *Save*. Prowlarr pushes the indexers to both apps.
 
-### 6.4 Plex — `http://<LAN_IP>:32400/web`
+### 6.4 Plex — `http://<server address>:32400/web`
 
-*(libraries and network settings are done by the script; only the account link and hardware transcoding remain. Steps 2 and 3 below are what the script sets.)*
+*(libraries and network settings are done by the script; what remains is the account link, the router port forward and hardware transcoding)*
 
 1. Because of `PLEX_CLAIM` the server is attached to your Plex account automatically. If you skipped it (or it expired), run `docker compose up -d --force-recreate plex` with a fresh token.
-2. Add libraries. Plex mounts `$DATA_DIR` read-only as `/data/media`, so the folders are:
+2. Libraries. Plex mounts `$DATA_DIR` read-only as `/data/media`, so the folders are:
    - TV: `/data/media/data/media/tv-shows`
    - Movies: `/data/media/data/media/movies`
-3. **Settings → Network**: *Custom server access URLs* = `http://<LAN_IP>:32400`; *LAN Networks* = your subnet (e.g. `192.168.1.0/24`). Plex runs in bridge mode, so without this, clients on your own network can be treated as remote.
+3. **Settings → Network**: *LAN Networks* = your `LAN_SUBNETS` (add your home subnet there); *Custom server access URLs* = `PLEX_CUSTOM_URLS` if you set it (Tailscale address, a DDNS name...). Plex runs in bridge mode, so without the LAN Networks, clients on your own network can be treated as remote.
 4. Hardware transcoding (Plex Pass): **Settings → Transcoder → Use hardware acceleration**.
-5. Remote access: the script turns it off (you reach Plex through Tailscale, see the note in step 2). To use a router port forward instead, set `PublishServerOnPlexOnlineKey: true` in the `plex` section of `config/arr.yml`, forward TCP 32400 to `<LAN_IP>`, and run the script again.
+5. **Remote access** is switched on by the script, with the port set manually because UPnP cannot work from inside Docker. On your router, forward **TCP 32400** to the server's LAN address (on a FRITZ!Box: *Internet → Freigaben → Portfreigaben*, device = the server, TCP, port 32400 both sides). Then check *Settings → Remote Access*: it should say *Fully accessible outside your network*.
 
 Plex needs write access only to its own config, so the media is mounted `:ro`. If you enable *Allow media deletion* in Plex, remove the `:ro` from the `plex` volume.
+
+Hardening for a server that faces the internet, in Plex itself: turn on two-factor authentication on your Plex account, leave *List of IP addresses and networks that are allowed without auth* empty, do not forward any other port, and keep the image current (Renovate proposes Plex updates as soon as a release is a day old).
 
 ### 6.5 Homepage — `http://<LAN_IP>`
 
@@ -363,7 +366,7 @@ One-time setup:
 
 How it behaves (`renovate.json`):
 
-- **Mondays before 08:00** (Europe/Amsterdam) it opens or refreshes its PRs; the rest of the week it stays quiet.
+- **Mondays before 08:00** (Europe/Amsterdam) it opens or refreshes its PRs; the rest of the week it stays quiet. The exception is **Plex**, which can face the internet: its updates are proposed at any time, one day after release.
 - **One PR per image, always the newest version.** If a newer release appears while a PR is still open, that same PR is updated to the newer version (branch and title), so you never have an old and a new PR for the same image. If you close a PR without merging, it will not come back for that version, only for a newer one. There is also a *Dependency Dashboard* issue on GitHub listing everything pending.
 - **3-day cool-down**: a release is proposed only when it is at least 3 days old, which is when a broken or compromised release is usually pulled or fixed. Rebuilds of the linuxserver images (new base-image security patches, same app version) count as updates too.
 - **Never auto-merges.** Read the PR (release notes are linked), merge it from the GitHub app on your phone.
@@ -380,12 +383,12 @@ Something broke? `git revert <merge commit>`, then the same command.
 
 ## Security model
 
-- Only Plex and Homepage are outside the VPN. Everything that searches or downloads shares Gluetun's network namespace and its firewall (kill switch, DNS over TLS through the tunnel).
+- Only Plex and Homepage are outside the VPN, and only Plex is meant to be reachable from the internet (behind your router's port forward, protected by Plex accounts). Everything that searches or downloads shares Gluetun's network namespace and its firewall (kill switch, DNS over TLS through the tunnel).
 - qBittorrent is also bound to `tun0`.
-- Nothing is published on `0.0.0.0` unless you set `LAN_IP=0.0.0.0`. This matters because Docker-published ports bypass ufw/firewalld.
+- The web UIs are published only on `LAN_IP`, never on `0.0.0.0` unless you set it. This matters because Docker-published ports bypass ufw/firewalld. **Plex is the exception on purpose**: it is published on every IPv4 address (TCP 32400 only) so you can forward it from your router.
 - FlareSolverr (no authentication) is not published at all.
 - No container has the Docker socket.
-- Plex and the VPN group are on separate Docker networks. Homepage is the only container on both (it needs to query both), with a read-only config and a login.
+- Plex and the VPN group are on separate Docker networks, so a compromised Plex cannot reach the downloader or the apps. Homepage is the only container on both (it needs to query both), with a read-only config and a login. Plex sees your media read-only.
 - All containers use `no-new-privileges`; every container except Gluetun also uses `cap_drop: ALL` (only the capabilities needed by the linuxserver init are added back). If a container refuses to start, remove `cap_drop` for that service and check `docker compose logs <service>`.
 - The Mullvad key is a Docker secret and `.env` is git-ignored.
 - Every web UI has a login (set from `ARR_*` / `QBITTORRENT_*` / `HOMEPAGE_AUTH_PASSWORD` in `.env`). The apps run inside the VPN but they are still reachable by anyone who can reach `LAN_IP`.
@@ -418,7 +421,8 @@ Something broke? `git revert <merge commit>`, then the same command.
 | `recyclarr sync` reports `api_key`/401/connection errors | `SONARR_API_KEY` / `RADARR_API_KEY` are empty or wrong in `.env`; fix and `docker compose up -d recyclarr` |
 | `apply_download_safety.py`: `skipped ... is empty` or connection errors | Fill the API keys in `.env`; the script talks to `http://<LAN_IP>:<port>`, so run it from a machine in `LAN_SUBNETS` (the server itself is fine) |
 | A release disappeared / "Caution: Found executable" in Activity | The protection worked: the release was blocklisted and another one is tried |
-| Plex clients on the LAN play "remotely" | Set *LAN Networks* and *Custom server access URLs* (6.4) |
+| Plex clients on the LAN play "remotely" | Put your home subnet in `LAN_SUBNETS` and run `./scripts/apply_arr_config.py` (it sets Plex's *LAN Networks*) |
+| Plex *Remote Access*: "Not available outside your network" | The router does not forward TCP 32400 to the server's LAN address, or the address changed (give the server a DHCP reservation), or your ISP uses CGNAT (your router's public IP differs from what a "what is my IP" site shows: IPv4 forwarding cannot work, ask the ISP for a public IPv4). Also check `docker compose ps plex` shows `0.0.0.0:32400->32400/tcp` |
 
 ## Migrating from the previous setup (WireGuard + Deluge + Overseerr + Watchtower)
 

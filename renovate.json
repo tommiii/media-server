@@ -17,6 +17,12 @@
   "pinDigests": true,
   "packageRules": [
     {
+      "description": "Plex can be exposed to the internet: propose its updates as soon as they are a day old",
+      "matchPackageNames": ["lscr.io/linuxserver/plex"],
+      "schedule": ["at any time"],
+      "minimumReleaseAge": "1 day"
+    },
+    {
       "description": "linuxserver.io *arr tags, e.g. 4.0.20.3014-ls325. The lsNNN build counter only ever increases, so it is the tie-breaker (rebuilds with the same app version still count as updates)",
       "matchDatasources": ["docker"],
       "matchPackageNames": [
