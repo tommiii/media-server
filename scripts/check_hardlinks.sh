@@ -9,6 +9,7 @@
 #   1. Sonarr and Radarr have "Use Hardlinks instead of Copy" on
 #   2. downloads/complete and media/ are on the same filesystem (hardlinks cannot cross filesystems)
 #   3. in practice: which finished files are hardlinked into media/ (safe to delete) and which are NOT
+#      (archives are counted apart: Unpackerr extracts them, so the archive itself is never linked)
 #      (not imported yet, or imported as a copy: deleting them would lose the only copy if they are
 #      not also in media/)
 #   4. the reverse: recent files in media/ that were copied instead of hardlinked (wasted space)
@@ -56,8 +57,10 @@ linked=0; alone=0; alone_list=()
 while IFS= read -r -d '' f; do
   read -r nlink _ mtime size <<<"$(st "$f")"
   if [ "$nlink" -ge 2 ]; then linked=$((linked+1)); else alone=$((alone+1)); alone_list+=("$f|$mtime|$size"); fi
-done < <(find "$complete" -type f -size +"$MIN_SIZE" -print0 2>/dev/null)
+done < <(find "$complete" -type f -size +"$MIN_SIZE" ! \( -iname '*.rar' -o -iname '*.r[0-9][0-9]' -o -iname '*.zip' -o -iname '*.7z' \) -print0 2>/dev/null)
 ok "$linked finished file(s) are hardlinked into media/: deleting the download keeps the library copy"
+archives=$(find "$complete" -type f -size +"$MIN_SIZE" \( -iname '*.rar' -o -iname '*.r[0-9][0-9]' -o -iname '*.zip' -o -iname '*.7z' \) 2>/dev/null | wc -l | tr -d ' ')
+[ "$archives" -gt 0 ] && note "$archives archive file(s) in downloads/complete: Unpackerr extracts them and Sonarr/Radarr import the video from the extracted copy. The archive itself is never hardlinked, by design; if the extracted video was never imported, it is not in your library"
 if [ "$alone" -gt 0 ]; then
   bad "$alone finished file(s) are NOT hardlinked: not imported yet, or imported as a copy. If the cleanup deletes them and nothing else holds the data, it is gone:"
   now=$(date +%s)

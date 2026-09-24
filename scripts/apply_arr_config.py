@@ -18,7 +18,9 @@ What it does, in this order
      connection), removes leftover clients (e.g. Deluge).
   4. Prowlarr: login, FlareSolverr proxy + tag, the indexers listed in arr.yml (the app tests each
      one), links to Sonarr and Radarr.
-  5. Sonarr/Radarr: optionally assigns the quality profile Recyclarr created to the existing
+  5. Sonarr: a release profile that refuses releases published before the episode aired
+     (the fake "episode" files that appear the day before), from `release_profile` in arr.yml.
+     Sonarr/Radarr: optionally assigns the quality profile Recyclarr created to the existing
      series/movies (assign_to_existing in arr.yml, OFF by default: it can make the apps replace files
      whose quality the profile does not allow).
   6. Plex: reads its token from Preferences.xml, sets the preferences and creates the libraries
@@ -51,6 +53,7 @@ OPAQUE = ("password", "apiKey")  # the API returns these masked, so they cannot 
 changes = 0
 problems = 0
 PENDING_TAGS = set()
+RELEASE_PROFILE_NAME = "Safety (managed by apply_arr_config.py)"
 # Prowlarr lists ~500 definitions. Below this many, the list is probably incomplete (update failed): never delete then.
 MIN_DEFINITIONS_FOR_ORPHAN_CHECK = 50
 
@@ -399,9 +402,43 @@ def arr(name, host, key, cfg, auth, qbit):
                 if not CHECK:
                     request("DELETE", f"{base}/downloadclient/{client['id']}", headers)
 
+    if name == "sonarr" and cfg.get("release_profile"):
+        apply_release_profile(base, headers, cfg["release_profile"])
+
     profile = cfg.get("quality_profile")
     if profile and profile.get("assign_to_existing"):
         assign_profile(name, base, headers, profile["name"], profile["assign_to_existing"])
+
+
+def apply_release_profile(base, headers, cfg):
+    """Sonarr release profile: refuse releases published before the episode aired (fake files appear the day before)."""
+    wanted = {
+        "name": RELEASE_PROFILE_NAME, "enabled": True, "required": [], "ignored": list(cfg.get("ignored") or []),
+        "airDateRestriction": bool(cfg.get("reject_unaired", True)), "airDateGracePeriod": int(cfg.get("grace_days", 0)),
+        "allowSeasonPackWithoutAllEpisodesAired": False, "indexerId": 0, "tags": [], "excludedTags": [],
+    }
+    existing = next((p for p in request("GET", f"{base}/releaseprofile", headers) if p.get("name") == RELEASE_PROFILE_NAME), None)
+    summary = (f"reject unaired releases (grace {wanted['airDateGracePeriod']} d)" if wanted["airDateRestriction"] else "no air date rule")
+    if wanted["ignored"]:
+        summary += f", ignore {len(wanted['ignored'])} term(s)"
+    if existing is not None:
+        keys = ("enabled", "ignored", "airDateRestriction", "airDateGracePeriod")
+        if all(existing.get(k) == wanted[k] for k in keys):
+            print("  release profile: ok")
+            return
+        note(f"release profile updated: {summary}")
+        if not CHECK:
+            try:
+                request("PUT", f"{base}/releaseprofile/{existing['id']}", headers, body={**existing, **wanted})
+            except ApiError as error:
+                problem(f"release profile: {error}")
+        return
+    note(f"release profile created: {summary}")
+    if not CHECK:
+        try:
+            request("POST", f"{base}/releaseprofile", headers, body=wanted)
+        except ApiError as error:
+            problem(f"release profile: {error}")
 
 
 def assign_profile(name, base, headers, profile_name, mode):

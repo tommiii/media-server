@@ -58,10 +58,7 @@ run ./scripts/apply_arr_config.py
 step "File filters (executables are rejected) and size ceiling"
 run ./scripts/apply_download_safety.py
 
-step "Checking that everything goes through the VPN"
-run ./scripts/check_vpn_connection.sh
-
-step "Leak test (network namespaces, exit IP, DNS, qBittorrent interface)"
+step "Leak test: does everything that downloads go through the VPN? (network namespaces, exit IP, DNS, qBittorrent interface)"
 run ./scripts/leak_test.sh
 
 step "Hardlinks: is deleting finished downloads safe for the library?"

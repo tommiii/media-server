@@ -167,6 +167,42 @@ services:
       - ./config/recyclarr/configs:/config/configs:ro
     restart: *restart
 
+  # Extracts releases that come as archives (.rar, .zip, ...): Sonarr/Radarr refuse to import them ("Found archive
+  # file, might need to be extracted"). It only touches downloads that Sonarr/Radarr grabbed themselves. The archive
+  # stays (the torrent keeps seeding), the extracted video is imported by hardlink like any other, and the extracted
+  # copy is deleted 5 minutes later. Rootless, no network of its own: it talks to the apps on localhost.
+  unpackerr:
+    <<: [*hardened, *vpn]
+    image: ghcr.io/unpackerr/unpackerr:0.16.1
+    container_name: unpackerr
+    user: ${PUID}:${PGID}
+    depends_on:
+      gluetun:
+        condition: service_healthy
+        restart: true
+      sonarr:
+        condition: service_started
+      radarr:
+        condition: service_started
+    environment:
+      TZ: ${TIMEZONE}
+      UN_SONARR_0_URL: http://localhost:8989
+      UN_SONARR_0_API_KEY: ${SONARR_API_KEY:-}
+      UN_SONARR_0_PATHS_0: /data/downloads
+      UN_SONARR_0_PROTOCOLS: torrent,TorrentDownloadProtocol
+      UN_SONARR_0_DELETE_ORIG: "false"
+      UN_SONARR_0_DELETE_DELAY: 5m
+      UN_RADARR_0_URL: http://localhost:7878
+      UN_RADARR_0_API_KEY: ${RADARR_API_KEY:-}
+      UN_RADARR_0_PATHS_0: /data/downloads
+      UN_RADARR_0_PROTOCOLS: torrent,TorrentDownloadProtocol
+      UN_RADARR_0_DELETE_ORIG: "false"
+      UN_RADARR_0_DELETE_DELAY: 5m
+    volumes:
+      # same path as Sonarr/Radarr and qBittorrent see (/data/downloads/...), so the paths they report match
+      - ${DATA_DIR}/data/downloads:/data/downloads
+    restart: *restart
+
   # ---------------------------------------------------------------- outside the VPN
   plex:
     <<: *hardened

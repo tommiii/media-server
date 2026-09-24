@@ -36,6 +36,12 @@ sonarr:
     host: localhost
     port: 8080
     category: tv
+  # Fake "new episode" files (executables, archives with a password) are often posted the day before an episode
+  # airs. Sonarr can refuse any release that was published before the episode aired.
+  release_profile:
+    reject_unaired: true             # refuse releases for episodes that have not aired yet
+    grace_days: 0                    # 0 = published at or after the air date; negative allows earlier, positive waits
+    ignored: []                      # optional: words or /regex/ in a release title that reject it (careful: titles too)
   quality_profile:                   # created by Recyclarr (config/recyclarr/configs/media.yml)
     name: WEB-1080p
     # Which titles already in Sonarr get this profile:

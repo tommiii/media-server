@@ -11,10 +11,11 @@ Self-hosted media server where **everything that searches or downloads runs behi
 | Sonarr | TV automation | ✅ | `http://<LAN_IP>:8989` |
 | Radarr | Movie automation | ✅ | `http://<LAN_IP>:7878` |
 | Recyclarr | Keeps quality profiles / custom formats in sync (TRaSH Guides) | ✅ | – |
+| Unpackerr | Extracts releases that come as archives so Sonarr/Radarr can import them | ✅ | – |
 | Plex | Media streaming, **reachable from the internet** (router port forward) | ❌ | `http://<any server address>:32400/web` |
 | Homepage | Dashboard with widgets (login required) | ❌ | `http://<LAN_IP>` |
 
-Prowlarr, FlareSolverr, Sonarr, Radarr and qBittorrent share Gluetun's network namespace: they have no network interface other than the VPN tunnel, so if the tunnel drops they simply have no connection (no leak). That is also why they talk to each other on `localhost`.
+Prowlarr, FlareSolverr, Sonarr, Radarr, qBittorrent, Recyclarr and Unpackerr share Gluetun's network namespace: they have no network interface other than the VPN tunnel, so if the tunnel drops they simply have no connection (no leak). That is also why they talk to each other on `localhost`.
 
 ---
 
@@ -35,7 +36,7 @@ compose.yml            the stack (containers, networks, ports)
 .env.sample            copy to .env and fill in (never committed)
 renovate.json          image update pull requests
 scripts/               setup.sh (one command for everything), apply_arr_config.py, apply_download_safety.py,
-                       audit_media.sh, check_vpn_connection.sh, leak_test.sh, check_hardlinks.sh, restart_services.sh
+                       leak_test.sh, check_hardlinks.sh
 config/
   arr.yml              desired state of qBittorrent, Sonarr, Radarr, Prowlarr (indexers) and Plex
   recyclarr/           quality profiles and size limits (TRaSH)
@@ -151,10 +152,10 @@ docker compose ps
 Wait ~30 seconds. `gluetun` must be `healthy`; the other VPN services start only after that. Then verify:
 
 ```bash
-./scripts/check_vpn_connection.sh
+./scripts/leak_test.sh
 ```
 
-You should see `OK ... You are connected to Mullvad` for gluetun, prowlarr, flaresolverr, sonarr, radarr and qbittorrent, and `OK plex is outside the VPN`. The script exits non-zero if anything is wrong. Run it again after every change to the VPN part of the compose file.
+Every line must start with `OK`: each service that searches or downloads has no network of its own (only gluetun's tunnel), the exit IP is a Mullvad server and not your home IP, DNS goes through gluetun, and qBittorrent is bound to `tun0`. The script exits non-zero if anything is wrong. Run it again after every change to `compose.yml`.
 
 If `gluetun` is not healthy, see [Troubleshooting](#troubleshooting).
 
@@ -184,7 +185,7 @@ Everything is configured **from files**, without opening the UIs: `config/arr.ym
 | Recyclarr | Syncs the TRaSH quality profiles, custom formats and size limits |
 | `apply_arr_config.py` again | Puts the Recyclarr quality profiles on the titles that have **no file yet** (see below) |
 | `apply_download_safety.py` | File filters (executables) and size ceiling |
-| `check_vpn_connection.sh`, `leak_test.sh` | Verify that everything that searches or downloads goes through Mullvad (see the security model) |
+| `leak_test.sh` | Verifies that everything that searches or downloads goes through Mullvad (see the security model) |
 | `check_hardlinks.sh` | Verifies that the automatic clean-up of finished downloads cannot touch the library (see below) |
 
 What `apply_arr_config.py` does (`--check` shows it without changing anything):
@@ -193,7 +194,7 @@ What `apply_arr_config.py` does (`--check` shows it without changing anything):
 |---|---|
 | API keys | Reads the Sonarr, Radarr and Prowlarr keys from their `config.xml` and the Plex token from `Preferences.xml`, and writes them into `.env` if empty (Homepage and Recyclarr use them) |
 | qBittorrent | Signs in (on the first start with the temporary password from `docker logs`), sets your web UI login, finished downloads in `/data/downloads/complete` and unfinished ones in `/data/downloads/incomplete` (partial files get a `.!qB` extension), UPnP off, network interface `tun0`, **deletes a torrent and its files 3 days after it finished seeding**, and generates an API key into `.env` |
-| Sonarr / Radarr | Forms login (always required), hardlinks on, root folders, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), removes the old Deluge client, puts the Recyclarr quality profile on the titles that have no file yet |
+| Sonarr / Radarr | Forms login (always required), hardlinks on, root folders, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), removes the old Deluge client, Sonarr also gets a release profile that **rejects releases published before the episode aired**, puts the Recyclarr quality profile on the titles that have no file yet |
 | Prowlarr | Forms login, FlareSolverr proxy with tag `flaresolverr`, **the indexers listed in `config/arr.yml`** (Prowlarr tests each one), links to Sonarr and Radarr (full sync, so the indexers reach both), removes indexers whose definition Prowlarr no longer has (switch: `remove_orphaned_indexers`), sets the **minimum seeders** (`minimum_seeders`, 5) that Sonarr/Radarr require |
 | Plex | Turns *Remote Access* on with a manually forwarded port (32400), sets *LAN Networks* (your `LAN_SUBNETS`), adds the URLs of `PLEX_CUSTOM_URLS` if you set it, transcodes in RAM (`/transcode`) with hardware acceleration on, creates the *Movies* and *TV Shows* libraries |
 
@@ -316,20 +317,28 @@ docker compose exec recyclarr recyclarr sync               # first sync, now (th
 - **Recyclarr** reads `config/recyclarr/configs/media.yml` (in this repo, mounted read-only). It also sets the per-quality **size limits** ([File size](#file-size-what-is-configured)). It creates the TRaSH profiles **WEB-1080p** (Sonarr) and **HD Bluray + WEB** (Radarr) with their custom formats. It does not touch your existing profiles or titles (see the warning in 6.0). For 2160p, remux or anime, take another template from https://github.com/recyclarr/config-templates and put it in `config/recyclarr/configs/`.
 - **`apply_download_safety.py`** (file filters and the Radarr size ceiling) is idempotent: run it again whenever Prowlarr adds indexers to Sonarr/Radarr (the setting it enforces is per indexer, see below).
 
-## Only video files: how downloads are controlled
+## Fake releases, executables and archives: how downloads are controlled
 
-Sonarr/Radarr do **not** reject executables out of the box: the per-indexer *Fail Downloads* option is empty by default. That is why `.exe` files can reach your downloads folder. Layers, from the earliest to the last:
+Torrent sites are full of fake releases: an `.exe` "codec", an archive with a password, a tiny file named after an episode that has not aired yet. They are stopped in layers, from the earliest to the last. Most of the work is done **before anything is downloaded**:
 
 | # | Where | What it does |
 |---|---|---|
-| 1 | **Recyclarr** (TRaSH custom formats) | Scores down / blocks BR-DISK, LQ, fake and low-quality release groups: the usual carriers of junk |
-| 2 | **Sonarr/Radarr, per indexer: *Fail Downloads*** (set by `apply_download_safety.py`) | Reads the file list inside the `.torrent` **before** sending it to qBittorrent. A release with `.exe .bat .cmd .sh`, "potentially dangerous" files (`.lnk .scr .ps1 .vbs .arj .lzh .zipx`) or, in Sonarr, your extra extensions (`.msi .js .jar .dll .apk ...`) is rejected, blocklisted, and the next best release is tried. The same check runs again at import. Look for *"Caution: Found executable..."* in Activity/History: that is it working |
-| 3 | **qBittorrent, *Excluded file names*** (set by the script) | Whatever slips through (magnet links have no file list to inspect) is never written to disk if it matches `*.exe *.msi *.bat *.scr ...`. External-program hooks ("run on torrent added/finished") are disabled |
-| 4 | **Sonarr/Radarr import** | Only files with a video extension are ever moved into the library |
-| 5 | **`./scripts/audit_media.sh`** | Checks the real content, not the name: a video extension must correspond to a video file (magic bytes), so an executable renamed to `movie.mkv` is caught. Anything that is not video/subtitle/artwork is reported. `--quarantine` moves it aside (never deletes). Exit code 1 when something is found, so it can run from cron, e.g. `0 5 * * * cd /path/to/media-server && ./scripts/audit_media.sh` |
-| 6 | *(optional)* **`noexec` on the data disk** | In `/etc/fstab` add `noexec,nosuid,nodev` to the mount options of the disk that holds `DATA_DIR`: nothing stored there can be executed, whatever it is |
+| 1 | **Quality profile + Recyclarr** | Only the qualities of the profile (no CAM or telesync). TRaSH custom formats score down BR-DISK, LQ, fake and low-quality release groups |
+| 2 | **Sonarr release profile: "Reject Unaired Releases"** (`sonarr.release_profile` in `config/arr.yml`) | Refuses any release **published before the episode aired**: this is the fake "new episode" that appears the day before. `grace_days: 0` means "at or after the air date". An episode without a known air date is refused too |
+| 3 | **Size limits** (Recyclarr) | Below the minimum MB per minute a release is rejected: a 3 MB "episode" never passes (a 45-minute WEB-DL 1080p must be at least ~700 MB) |
+| 4 | **Minimum seeders** (`minimum_seeders`, 5) | Rejects torrents nobody is sharing |
+| 5 | **Fail Downloads, per indexer** (set by `apply_download_safety.py`) | Reads the file list inside the `.torrent` **before** sending it to qBittorrent. A release with `.exe .bat .cmd .sh`, "potentially dangerous" files (`.lnk .scr .ps1 .vbs .arj .lzh .zipx`) or, in Sonarr, your extra extensions (`.msi .js .jar .dll .apk ...`) is rejected, blocklisted, and the next best release is tried. Look for *"Caution: Found executable..."* in Activity/History: that is it working |
+| 6 | **qBittorrent, *Excluded file names*** (set by `apply_download_safety.py`) | Whatever slips through (magnet links have no file list to inspect) is never written to disk if it matches `*.exe *.msi *.bat *.scr ...`. External-program hooks are disabled |
+| 7 | **Import** | Only files with a video extension are ever moved into the library. Everything else stays in `downloads/complete` and is deleted with the torrent after 3 days |
+| 8 | *(optional)* **`noexec` on the data disk** | In `/etc/fstab` add `noexec,nosuid,nodev` to the mount options of the disk that holds `DATA_DIR`: nothing stored there can be executed, whatever it is |
 
-Honest limits: extension and container checks do not detect a *valid* video file crafted to exploit a player. Keep Plex and your players updated (bump the Plex tag regularly).
+**Archives.** Some genuine releases (movies and series alike) are shipped as `.rar`, `.zip` or `.7z`. Sonarr and Radarr refuse to import them ("Found archive file, might need to be extracted") and qBittorrent does not extract, so without help the download is wasted. **Unpackerr** (a container in the VPN group) extracts the archives *of downloads that Sonarr/Radarr grabbed*, the extracted video is imported by hardlink like any other, and the extracted copy is removed five minutes later; the archive stays until the torrent is deleted. What is inside is then subject to the same rule as everything else: only video files reach the library. Archives are deliberately **not** put on any reject list: Sonarr does not even allow it, and it would throw away legitimate releases.
+
+Honest limits:
+- **Magnet links** have no file list to inspect before the download: they rely on layers 1–4 and 6.
+- **Radarr has no air-date rule** (only Sonarr does). For movies the protection is the quality profile (no CAM/telesync), the size minimum, the seeders and *Minimum Availability*.
+- A file that is **not a video but has a video name** would be imported: nothing checks the *content* any more. Extracting an archive writes its content to disk (nothing is executed); `noexec` (layer 8) makes that harmless.
+- Extension and container checks do not detect a *valid* video file crafted to exploit a player. Keep Plex and your players updated.
 
 ## File size: what is configured
 
@@ -425,14 +434,11 @@ curl -s -X DELETE -H "X-Api-Key: $RADARR_API_KEY" "http://$LAN_IP:7878/api/v3/qu
 ```bash
 docker compose ps                                # status
 docker compose logs -f gluetun                   # VPN logs
-./scripts/check_vpn_connection.sh                # is everything on the VPN?
-./scripts/audit_media.sh                         # is everything in downloads/media really video?
 ./scripts/leak_test.sh                           # does everything that downloads go through the VPN? (--kill-switch: also cut the tunnel)
 ./scripts/check_hardlinks.sh                     # is the automatic clean-up of finished downloads safe for the library?
 ./scripts/setup.sh                               # bring everything to the state described in config/arr.yml (safe to repeat)
 ./scripts/apply_arr_config.py --check            # is the *arr setup still what config/arr.yml says? (changes nothing)
 ./scripts/apply_download_safety.py               # re-apply file filters (after adding indexers)
-./scripts/restart_services.sh                    # pull + recreate everything
 ```
 
 To make titles you add later follow the 1080p profile without thinking about it, run the configuration script regularly (it only changes what differs, and it is quiet when nothing does):
@@ -460,7 +466,7 @@ How it behaves (`renovate.json`):
 Deploy after merging:
 
 ```bash
-git pull && ./scripts/restart_services.sh && ./scripts/check_vpn_connection.sh
+git pull && ./scripts/setup.sh
 ```
 
 Something broke? `git revert <merge commit>`, then the same command.
