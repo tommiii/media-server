@@ -53,27 +53,42 @@ else
 fi
 
 echo "== 3. Finished downloads: hardlinked into the library?"
-linked=0; alone=0; alone_list=()
+VIDEO='\.(mkv|mp4|m4v|avi|mov|ts|m2ts|wmv|webm|mpg|mpeg)$'
+DANGER='\.(exe|msi|bat|cmd|com|scr|pif|lnk|vbs|vbe|js|jse|wsf|wsh|ps1|sh|jar|dll|apk|hta|reg|cpl|dmg|pkg)$'
+ARCHIVE='\.(rar|r[0-9][0-9]|zip|7z)$'
+linked=0; alone=0; alone_rows=""; danger_rows=""; archives=0
+now=$(date +%s)
 while IFS= read -r -d '' f; do
+  rel=${f#"$complete"/}; lower=$(printf '%s' "$rel" | tr '[:upper:]' '[:lower:]')
   read -r nlink _ mtime size <<<"$(st "$f")"
-  if [ "$nlink" -ge 2 ]; then linked=$((linked+1)); else alone=$((alone+1)); alone_list+=("$f|$mtime|$size"); fi
-done < <(find "$complete" -type f -size +"$MIN_SIZE" ! \( -iname '*.rar' -o -iname '*.r[0-9][0-9]' -o -iname '*.zip' -o -iname '*.7z' \) -print0 2>/dev/null)
-ok "$linked finished file(s) are hardlinked into media/: deleting the download keeps the library copy"
-archives=$(find "$complete" -type f -size +"$MIN_SIZE" \( -iname '*.rar' -o -iname '*.r[0-9][0-9]' -o -iname '*.zip' -o -iname '*.7z' \) 2>/dev/null | wc -l | tr -d ' ')
-[ "$archives" -gt 0 ] && note "$archives archive file(s) in downloads/complete: Unpackerr extracts them and Sonarr/Radarr import the video from the extracted copy. The archive itself is never hardlinked, by design; if the extracted video was never imported, it is not in your library"
+  if   [[ $lower =~ $DANGER ]];  then danger_rows+="$rel"$'\t'"$mtime"$'\t'"$size"$'\n'
+  elif [[ $lower =~ $ARCHIVE ]]; then archives=$((archives+1))
+  elif [[ $lower =~ $VIDEO ]];   then
+    if [ "$nlink" -ge 2 ]; then linked=$((linked+1)); else alone=$((alone+1)); alone_rows+="${rel%%/*}"$'\t'"$mtime"$'\t'"$size"$'\n'; fi
+  fi
+done < <(find "$complete" -type f -size +"$MIN_SIZE" -print0 2>/dev/null)
+ok "$linked finished video(s) are hardlinked into media/: deleting the download keeps the library copy"
+
+if [ -n "$danger_rows" ]; then
+  n=$(printf '%s' "$danger_rows" | grep -c .)
+  bad "$n executable/script file(s) were downloaded. They are fakes: never run them, delete them, and check that the file filters are on (./scripts/apply_download_safety.py --check):"
+  printf '%s' "$danger_rows" | while IFS=$'\t' read -r rel mtime size; do
+    printf '        %s  (%s MB, %s day(s) old)\n' "$rel" "$((size/1048576))" "$(( (now-mtime)/86400 ))"
+  done
+fi
+
 if [ "$alone" -gt 0 ]; then
   if grep -Eq '^[[:space:]]+only_after_import:[[:space:]]*true' config/arr.yml 2>/dev/null; then
-    note "$alone finished file(s) are NOT hardlinked (never imported, or imported as a copy). They are safe: with only_after_import Sonarr/Radarr delete a download only after importing it, so these stay on disk (stopped in qBittorrent) until you deal with them:"
+    note "$alone finished video(s) are NOT hardlinked (never imported, or imported as a copy). They are safe: with only_after_import Sonarr/Radarr delete a download only after importing it, so these stay on disk (stopped in qBittorrent) until you deal with them. Per release folder:"
   else
-    bad "$alone finished file(s) are NOT hardlinked: not imported yet, or imported as a copy. qBittorrent deletes downloads by itself, so if the clean-up removes them and nothing else holds the data, it is gone:"
+    bad "$alone finished video(s) are NOT hardlinked: never imported, or imported as a copy. qBittorrent deletes downloads by itself, so if the clean-up removes them and the library does not hold the data, it is gone. Per release folder:"
   fi
-  now=$(date +%s)
-  for entry in "${alone_list[@]:0:20}"; do
-    IFS='|' read -r f mtime size <<<"$entry"
-    printf '        %s  (%s MB, %s day(s) old)\n' "${f#"$complete"/}" "$((size/1048576))" "$(( (now-mtime)/86400 ))"
-  done
-  [ "$alone" -gt 20 ] && echo "        ... and $((alone-20)) more"
+  printf '%s' "$alone_rows" | awk -F'\t' -v now="$now" '{c[$1]++; s[$1]+=$3; if(!($1 in m)||$2<m[$1]) m[$1]=$2}
+    END{for(d in c) printf "%d\t%d\t%d\t%s\n", c[d], s[d]/1048576, (now-m[d])/86400, d}' | sort -t$'\t' -k3,3nr | head -25 | \
+    while IFS=$'\t' read -r count mb days dir; do printf '        %s  (%s file(s), %s MB, oldest %s day(s))\n' "${dir:0:90}" "$count" "$mb" "$days"; done
+  echo "        Is the title in your library? ls \"$media\"/*/ | grep -i <title>   (same title, different inode: a copy; absent: never imported)"
 fi
+[ "$archives" -gt 0 ] && note "$archives archive file(s) in downloads/complete: Unpackerr extracts them and Sonarr/Radarr import the video from the extracted copy. The archive itself is never hardlinked, by design"
 
 echo "== 4. Recent library files: hardlink or copy?"
 copies=0
