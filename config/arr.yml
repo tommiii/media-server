@@ -20,6 +20,12 @@ qbittorrent:
     incomplete_files_ext: true                  # unfinished files get .!qB, so nothing can import or scan them half-done
     upnp: false                      # useless behind Mullvad (no port forwarding)
     current_network_interface: tun0  # refuse to use anything but the VPN interface
+  # Clean-up of finished downloads. Counted as days of SEEDING after the torrent finished. Your library keeps its
+  # files because Sonarr/Radarr import by hardlink (`hardlinks: true` below; ./scripts/check_hardlinks.sh proves it
+  # on your disk). Public trackers only: a private tracker wants a ratio or a longer seeding time.
+  cleanup:
+    delete_after_seeding_days: 3                # 0 = never delete anything
+    delete_files: true                          # false = remove only the torrent, keep the files on disk
 
 sonarr:
   hardlinks: true                    # import by hardlink: instant, no extra disk space

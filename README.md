@@ -35,7 +35,7 @@ compose.yml            the stack (containers, networks, ports)
 .env.sample            copy to .env and fill in (never committed)
 renovate.json          image update pull requests
 scripts/               setup.sh (one command for everything), apply_arr_config.py, apply_download_safety.py,
-                       audit_media.sh, check_vpn_connection.sh, leak_test.sh, restart_services.sh
+                       audit_media.sh, check_vpn_connection.sh, leak_test.sh, check_hardlinks.sh, restart_services.sh
 config/
   arr.yml              desired state of qBittorrent, Sonarr, Radarr, Prowlarr (indexers) and Plex
   recyclarr/           quality profiles and size limits (TRaSH)
@@ -185,13 +185,14 @@ Everything is configured **from files**, without opening the UIs: `config/arr.ym
 | `apply_arr_config.py` again | Puts the Recyclarr quality profiles on the titles that have **no file yet** (see below) |
 | `apply_download_safety.py` | File filters (executables) and size ceiling |
 | `check_vpn_connection.sh`, `leak_test.sh` | Verify that everything that searches or downloads goes through Mullvad (see the security model) |
+| `check_hardlinks.sh` | Verifies that the automatic clean-up of finished downloads cannot touch the library (see below) |
 
 What `apply_arr_config.py` does (`--check` shows it without changing anything):
 
 | Service | Effect |
 |---|---|
 | API keys | Reads the Sonarr, Radarr and Prowlarr keys from their `config.xml` and the Plex token from `Preferences.xml`, and writes them into `.env` if empty (Homepage and Recyclarr use them) |
-| qBittorrent | Signs in (on the first start with the temporary password from `docker logs`), sets your web UI login, finished downloads in `/data/downloads/complete` and unfinished ones in `/data/downloads/incomplete` (partial files get a `.!qB` extension), UPnP off, network interface `tun0`, and generates an API key into `.env` |
+| qBittorrent | Signs in (on the first start with the temporary password from `docker logs`), sets your web UI login, finished downloads in `/data/downloads/complete` and unfinished ones in `/data/downloads/incomplete` (partial files get a `.!qB` extension), UPnP off, network interface `tun0`, **deletes a torrent and its files 3 days after it finished seeding**, and generates an API key into `.env` |
 | Sonarr / Radarr | Forms login (always required), hardlinks on, root folders, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), removes the old Deluge client, puts the Recyclarr quality profile on the titles that have no file yet |
 | Prowlarr | Forms login, FlareSolverr proxy with tag `flaresolverr`, **the indexers listed in `config/arr.yml`** (Prowlarr tests each one), links to Sonarr and Radarr (full sync, so the indexers reach both), removes indexers whose definition Prowlarr no longer has (switch: `remove_orphaned_indexers`), sets the **minimum seeders** (`minimum_seeders`, 5) that Sonarr/Radarr require |
 | Plex | Turns *Remote Access* on with a manually forwarded port (32400), sets *LAN Networks* (your `LAN_SUBNETS`), adds the URLs of `PLEX_CUSTOM_URLS` if you set it, transcodes in RAM (`/transcode`) with hardware acceleration on, creates the *Movies* and *TV Shows* libraries |
@@ -359,6 +360,25 @@ What you can turn, from the biggest effect to the smallest:
 
 Files you already have are not touched. Rejections show up in *Interactive Search* and in the app logs; the ceiling is checked at grab time, before anything is sent to qBittorrent.
 
+## Clean-up: finished downloads are deleted after 3 days, the library keeps its files
+
+qBittorrent removes a torrent **and its files** from `downloads/complete` once it has **seeded for 3 days after finishing** (`cleanup: delete_after_seeding_days: 3` in `config/arr.yml`; the time counts from completion, not from when you added it). This is safe for your library because of **hardlinks**: when Sonarr/Radarr import a file, `media/...` gets a second name for the *same data* as `downloads/complete/...` instead of a copy. Deleting one name leaves the data reachable through the other, so what Plex plays stays. It also means seeding costs no extra disk space.
+
+Hardlinks only work when three things hold, and `./scripts/check_hardlinks.sh` checks all of them against your real disk:
+
+1. Sonarr and Radarr have *Use Hardlinks instead of Copy* on (the configuration script sets it).
+2. `downloads/complete` and `media/` are on the same filesystem (both live under `$DATA_DIR/data`, and Sonarr/Radarr see them as one mount, `/data`). If they were on different disks, imports silently become copies.
+3. In practice: it lists finished files that are **not** hardlinked into `media/`, and warns about recent library files that were copied instead.
+
+**What can still go wrong: a release that was never imported.** If Sonarr/Radarr could not import a finished download (unknown series, wrong quality, "import blocked" in *Activity → Queue*), its only copy is the one in `downloads/complete`, and the clean-up would delete it after 3 days. The check lists those files. Fix them (or import them manually) before the 3 days pass, or lengthen `max_seeding_time`.
+
+Tuning, all in `config/arr.yml`, then `./scripts/apply_arr_config.py`:
+
+- **Another delay:** change `delete_after_seeding_days` (it accepts fractions: `0.5` is 12 hours).
+- **Keep the files, drop the torrent:** `delete_files: false` removes only the torrent from qBittorrent and leaves the files on disk.
+- **Private trackers:** they want a minimum ratio or seeding time. Do not use a short delete for them; use a longer delay or turn it off.
+- **Keep everything:** `delete_after_seeding_days: 0`.
+
 ## How a release is chosen, and what to do when a download crawls
 
 Sonarr and Radarr first drop the releases that fail the rules (wrong quality, outside the size limits, too few seeders, executables...), then rank the rest. The first rule that tells two releases apart decides:
@@ -408,6 +428,7 @@ docker compose logs -f gluetun                   # VPN logs
 ./scripts/check_vpn_connection.sh                # is everything on the VPN?
 ./scripts/audit_media.sh                         # is everything in downloads/media really video?
 ./scripts/leak_test.sh                           # does everything that downloads go through the VPN? (--kill-switch: also cut the tunnel)
+./scripts/check_hardlinks.sh                     # is the automatic clean-up of finished downloads safe for the library?
 ./scripts/setup.sh                               # bring everything to the state described in config/arr.yml (safe to repeat)
 ./scripts/apply_arr_config.py --check            # is the *arr setup still what config/arr.yml says? (changes nothing)
 ./scripts/apply_download_safety.py               # re-apply file filters (after adding indexers)

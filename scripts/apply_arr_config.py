@@ -12,7 +12,8 @@ What it does, in this order
   1. Reads the API keys of Sonarr/Radarr/Prowlarr from their config.xml and, if they are empty
      in .env, writes them there (Homepage and Recyclarr use them).
   2. qBittorrent: signs in (on first start with the temporary password from `docker logs`),
-     sets the web UI user/password, applies the preferences, makes sure an API key exists.
+     sets the web UI user/password, applies the preferences and the clean-up of finished
+     downloads (days of seeding), makes sure an API key exists.
   3. Sonarr/Radarr: login, hardlinks, root folders, qBittorrent download client (the app tests the
      connection), removes leftover clients (e.g. Deluge).
   4. Prowlarr: login, FlareSolverr proxy + tag, the indexers listed in arr.yml (the app tests each
@@ -238,6 +239,14 @@ def qbittorrent(host, cfg, env):
         return None
 
     wanted = dict(cfg.get("preferences") or {})
+    cleanup = cfg.get("cleanup") or {}
+    days = cleanup.get("delete_after_seeding_days")
+    if days is not None:  # days of seeding after completion -> qBittorrent's share limits (minutes; action 3 = remove with files)
+        if days:
+            wanted.update(max_seeding_time_enabled=True, max_seeding_time=int(float(days) * 1440), max_ratio_enabled=False,
+                          max_ratio_act=3 if cleanup.get("delete_files", True) else 1)
+        else:
+            wanted.update(max_seeding_time_enabled=False, max_ratio_enabled=False)
     current = request("GET", f"{base}/api/v2/app/preferences", referer, opener=opener)
     diff = {k: v for k, v in wanted.items() if current.get(k) != v}
     if first_run and password:
