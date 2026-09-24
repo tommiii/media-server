@@ -1,0 +1,42 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "Europe/Amsterdam",
+  "enabledManagers": ["docker-compose"],
+  "labels": ["dependencies"],
+  "automerge": false,
+  "schedule": ["before 8am on monday"],
+  "prConcurrentLimit": 5,
+  "rebaseWhen": "conflicted",
+  "separateMajorMinor": false,
+  "separateMultipleMajor": false,
+  "separateMultipleMinor": false,
+  "minimumReleaseAge": "3 days",
+  "minimumReleaseAgeBehaviour": "timestamp-optional",
+  "internalChecksFilter": "strict",
+  "pinDigests": true,
+  "packageRules": [
+    {
+      "description": "linuxserver.io *arr tags, e.g. 4.0.20.3014-ls325. The lsNNN build counter only ever increases, so it is the tie-breaker (rebuilds with the same app version still count as updates)",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": [
+        "lscr.io/linuxserver/sonarr",
+        "lscr.io/linuxserver/radarr",
+        "lscr.io/linuxserver/prowlarr"
+      ],
+      "versioning": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)\\.\\d+-ls(?<build>\\d+)$"
+    },
+    {
+      "description": "linuxserver.io Plex tags, e.g. 1.43.4.10903-e5521bd8c-ls325",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["lscr.io/linuxserver/plex"],
+      "versioning": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)\\.\\d+-[0-9a-f]+-ls(?<build>\\d+)$"
+    },
+    {
+      "description": "linuxserver.io qBittorrent tags, e.g. 5.2.3_v2.0.14-ls477 (libtorrent version ignored)",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["lscr.io/linuxserver/qbittorrent"],
+      "versioning": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)_v[\\d.]+-ls(?<build>\\d+)$"
+    }
+  ]
+}
