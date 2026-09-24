@@ -33,6 +33,10 @@ qbittorrent:
 
 sonarr:
   hardlinks: true                    # import by hardlink: instant, no extra disk space
+  # A file that was downloaded is NEVER replaced by a better one. false turns "Upgrades Allowed" off in every quality
+  # profile (also the old ones your existing titles use) and sets Propers/Repacks to "Do Not Prefer". The search still
+  # takes the best quality available WHEN it runs; it just never comes back for a better one later.
+  upgrades: false
   root_folders:
     - /data/media/tv-shows
   download_client:
@@ -41,11 +45,13 @@ sonarr:
     port: 8080
     category: tv
   # Fake "new episode" files (executables, archives with a password) are often posted the day before an episode
-  # airs. Sonarr can refuse any release that was published before the episode aired.
+  # airs. Two defences, both in one Sonarr release profile:
   release_profile:
-    reject_unaired: true             # refuse releases for episodes that have not aired yet
+    reject_unaired: true             # refuse releases published before the episode aired. Needs a NEWER Sonarr than 4.0.20:
+                                     # on an older one it is skipped (the script says so) and only `ignored` applies
     grace_days: 0                    # 0 = published at or after the air date; negative allows earlier, positive waits
-    ignored: []                      # optional: words or /regex/ in a release title that reject it (careful: titles too)
+    ignored:                         # title patterns that reject a release: a torrent named like a file ending in .exe is a fake
+      - '/\.(exe|msi|scr|bat|cmd|com|lnk|vbs|js|jar|apk)$/'
   quality_profile:                   # created by Recyclarr (config/recyclarr/configs/media.yml)
     name: TV - best available         # 1080p, then 720p, then 480p (see config/recyclarr/configs/media.yml)
     # Which titles already in Sonarr get this profile:
@@ -60,6 +66,7 @@ sonarr:
 
 radarr:
   hardlinks: true
+  upgrades: false                    # same as in the sonarr section: a downloaded movie is never replaced
   root_folders:
     - /data/media/movies
   download_client:

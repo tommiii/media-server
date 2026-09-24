@@ -195,7 +195,7 @@ What `apply_arr_config.py` does (`--check` shows it without changing anything):
 |---|---|
 | API keys | Reads the Sonarr, Radarr and Prowlarr keys from their `config.xml` and the Plex token from `Preferences.xml`, and writes them into `.env` if empty (Homepage and Recyclarr use them) |
 | qBittorrent | Signs in (on the first start with the temporary password from `docker logs`), sets your web UI login, finished downloads in `/data/downloads/complete` and unfinished ones in `/data/downloads/incomplete` (partial files get a `.!qB` extension), UPnP off, network interface `tun0`, **deletes a torrent and its files 3 days after it finished seeding** (the library keeps its copy: hardlinks), and generates an API key into `.env` |
-| Sonarr / Radarr | Forms login (always required), hardlinks on, root folders, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), removes the old Deluge client, Sonarr also gets a release profile that **rejects releases published before the episode aired**, puts the Recyclarr quality profile on the titles that have no file yet |
+| Sonarr / Radarr | Forms login (always required), hardlinks on, root folders, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), removes the old Deluge client, Sonarr also gets a release profile that rejects titles ending in an executable extension (and releases published before the episode aired, where Sonarr supports it), upgrades are switched off in every quality profile, puts the Recyclarr quality profile on the titles that have no file yet |
 | Prowlarr | Forms login, FlareSolverr proxy with tag `flaresolverr`, **the indexers listed in `config/arr.yml`** (Prowlarr tests each one), links to Sonarr and Radarr (full sync, so the indexers reach both), removes indexers whose definition Prowlarr no longer has (switch: `remove_orphaned_indexers`), sets the **minimum seeders** (`minimum_seeders`, 10) that Sonarr/Radarr require |
 | Plex | Turns *Remote Access* on with a manually forwarded port (32400), sets *LAN Networks* (your `LAN_SUBNETS`), adds the URLs of `PLEX_CUSTOM_URLS` if you set it, transcodes in RAM (`/transcode`) with hardware acceleration on, creates the *Movies* and *TV Shows* libraries |
 
@@ -325,7 +325,7 @@ Torrent sites are full of fake releases: an `.exe` "codec", an archive with a pa
 | # | Where | What it does |
 |---|---|---|
 | 1 | **Quality profile + Recyclarr** | Only the qualities of the profile (no CAM or telesync). TRaSH custom formats score down BR-DISK, LQ, fake and low-quality release groups |
-| 2 | **Sonarr release profile: "Reject Unaired Releases"** (`sonarr.release_profile` in `config/arr.yml`) | Refuses any release **published before the episode aired**: this is the fake "new episode" that appears the day before. `grace_days: 0` means "at or after the air date". An episode without a known air date is refused too |
+| 2 | **Sonarr release profile** (`sonarr.release_profile` in `config/arr.yml`) | Two rules. **Title ends in an executable extension** (`.exe .msi .scr .bat ...`): rejected, because a real torrent name never does (this is how the fake `...-NTb.exe` "episode" looked). **"Reject Unaired Releases"**: refuses any release published *before the episode aired*, the day-before fakes; this one exists only in Sonarr versions newer than 4.0.20, so on an older Sonarr the script says so and only the title rule is active |
 | 3 | **Size limits** (Recyclarr) | Below the minimum MB per minute a release is rejected: a 3 MB "episode" never passes (a 45-minute WEB-DL 1080p must be at least ~700 MB) |
 | 4 | **Minimum seeders** (`minimum_seeders`, 10) | Rejects torrents nobody is sharing |
 | 5 | **Fail Downloads, per indexer** (set by `apply_download_safety.py`) | Reads the file list inside the `.torrent` **before** sending it to qBittorrent. A release with `.exe .bat .cmd .sh`, "potentially dangerous" files (`.lnk .scr .ps1 .vbs .arj .lzh .zipx`) or, in Sonarr, your extra extensions (`.msi .js .jar .dll .apk ...`) is rejected, blocklisted, and the next best release is tried. Look for *"Caution: Found executable..."* in Activity/History: that is it working |
@@ -337,7 +337,7 @@ Torrent sites are full of fake releases: an `.exe` "codec", an archive with a pa
 
 Honest limits:
 - **Magnet links** have no file list to inspect before the download: they rely on layers 1–4 and 6.
-- **Radarr has no air-date rule** (only Sonarr does). For movies the protection is the quality profile (no CAM/telesync), the size minimum, the seeders and *Minimum Availability*.
+- **Radarr has no release profile or air-date rule.** For movies the protection is the quality profile (no CAM/telesync), the size minimum, the seeders and *Minimum Availability*.
 - A file that is **not a video but has a video name** would be imported: nothing checks the *content* any more. Extracting an archive writes its content to disk (nothing is executed); `noexec` (layer 8) makes that harmless.
 - Extension and container checks do not detect a *valid* video file crafted to exploit a player. Keep Plex and your players updated.
 
@@ -377,7 +377,7 @@ Files you already have are not touched. Rejections show up in *Interactive Searc
 
 ## Duplicate downloads: one version is enough
 
-Two torrents for the same episodes or movie can be running at once, for three reasons: you added one **by hand** to qBittorrent (Sonarr/Radarr do not know about it and grab their own), Sonarr grabbed a **better** release while the first was still downloading (it counts as an upgrade), or a season pack and single episodes overlap. A daily job cleans this up (`./scripts/dedupe_downloads.py`, installed in **your crontab** at 04:30 by `setup.sh`; log in `$BASE_DIR/services/dedupe.log`).
+Two torrents for the same episodes or movie can be running at once, for three reasons: you added one **by hand** to qBittorrent (Sonarr/Radarr do not know about it and grab their own), Sonarr grabbed a **better** release while the first was still downloading (an upgrade: no longer possible now that upgrades are off), or a season pack and single episodes overlap. A daily job cleans this up (`./scripts/dedupe_downloads.py`, installed in **your crontab** at 04:30 by `setup.sh`; log in `$BASE_DIR/services/dedupe.log`).
 
 How it decides, so that it never removes the wrong thing:
 
@@ -425,14 +425,14 @@ Sonarr and Radarr first drop the releases that fail the rules (wrong quality, ou
 
 **The quality ladder.** Because *quality comes first*, the profile is an ordered list and the search walks down it. A release is only a candidate if it has enough seeders (`minimum_seeders`), so "best quality with good seeds, otherwise the next one down" is exactly what happens:
 
-| | Order (best first) | Stops upgrading at |
+| | Order (best first) | Upgrades |
 |---|---|---|
-| **Movies** (Radarr, *Movies - best available*) | Bluray 2160p → WEB 2160p → Bluray 1080p → WEB 1080p → Bluray 720p → WEB 720p → WEB 480p → Bluray 480p → DVD | Bluray 2160p |
-| **Series** (Sonarr, *TV - best available*) | WEB 1080p → Bluray 1080p → HDTV 1080p → WEB 720p → Bluray 720p → HDTV 720p → WEB 480p → Bluray 480p → DVD → SDTV | WEB 1080p |
+| **Movies** (Radarr, *Movies - best available*) | Bluray 2160p → WEB 2160p → Bluray 1080p → WEB 1080p → Bluray 720p → WEB 720p → WEB 480p → Bluray 480p → DVD | off |
+| **Series** (Sonarr, *TV - best available*) | WEB 1080p → Bluray 1080p → HDTV 1080p → WEB 720p → Bluray 720p → HDTV 720p → WEB 480p → Bluray 480p → DVD → SDTV | off |
 
-Nothing is refused for being "too low" as long as it is on the list and has seeders: a 720p with 60 seeders is taken over a 1080p with 2. If a better quality shows up later, the title is upgraded until the cutoff. Change the order or remove rungs in `config/recyclarr/configs/media.yml`, then `docker compose exec recyclarr recyclarr sync`. Titles that already have a profile keep it (see 6.0); the ladder applies to titles without a file and to new ones.
+Nothing is refused for being "too low" as long as it is on the list and has seeders: a 720p with 60 seeders is taken over a 1080p with 2. **Upgrades are off**: a title is downloaded once, with the best quality that is available *and* has seeders at that moment, and it is never replaced later by a better one (`upgrades: false` in `config/arr.yml` turns "Upgrades Allowed" off in **every** quality profile, the old ones your existing titles use included, and sets Propers/Repacks to "Do Not Prefer"). This also removes one of the causes of duplicate downloads. Change the order or remove rungs in `config/recyclarr/configs/media.yml`, then `docker compose exec recyclarr recyclarr sync`. Titles that already have a profile keep it (see 6.0); the ladder applies to titles without a file and to new ones.
 
-So seeders never outweigh quality: a better release with 2 seeders beats a slightly worse one with 500. What protects you from dead torrents is the **minimum seeders** rule (`minimum_seeders` in `config/arr.yml`, default 10): a release below it is rejected and the next best one is used. It is one value for every quality (the apps have no per-quality threshold), chosen high enough for a 10–25 GB 4K film, which crawls with few seeders, especially without port forwarding on Mullvad. The price: a very niche title with fewer seeders than that is never grabbed automatically; lower the value, or use *Interactive Search* in the app for that one. It is set once in Prowlarr's app profile and reaches every indexer (an indexer with its own minimum keeps it). The first acceptable release is grabbed immediately; if a better one shows up later and the quality cutoff is not reached yet, it is upgraded.
+So seeders never outweigh quality: a better release with 2 seeders beats a slightly worse one with 500. What protects you from dead torrents is the **minimum seeders** rule (`minimum_seeders` in `config/arr.yml`, default 10): a release below it is rejected and the next best one is used. It is one value for every quality (the apps have no per-quality threshold), chosen high enough for a 10–25 GB 4K film, which crawls with few seeders, especially without port forwarding on Mullvad. The price: a very niche title with fewer seeders than that is never grabbed automatically; lower the value, or use *Interactive Search* in the app for that one. It is set once in Prowlarr's app profile and reaches every indexer (an indexer with its own minimum keeps it). The first acceptable release is grabbed immediately and never replaced.
 
 **A download is slow: find out why.**
 

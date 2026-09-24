@@ -372,11 +372,22 @@ def arr(name, host, key, cfg, auth, qbit):
     apply_auth(base, headers, auth)
 
     media = request("GET", f"{base}/config/mediamanagement", headers)
+    media_changes = {}
     if "hardlinks" in cfg and media.get("copyUsingHardlinks") != cfg["hardlinks"]:
-        note(f"hardlinks -> {cfg['hardlinks']}")
+        media_changes["copyUsingHardlinks"] = cfg["hardlinks"]
+    if cfg.get("upgrades") is False:
+        # "Do Not Prefer": a Proper/Repack is not treated as better than the file you have
+        current = media.get("downloadPropersAndRepacks")
+        if str(current).lower() not in ("donotprefer", "2"):
+            media_changes["downloadPropersAndRepacks"] = enum_value(current, "doNotPrefer", 2)
+    if media_changes:
+        note("media management: " + ", ".join(f"{k}={v}" for k, v in media_changes.items()))
         if not CHECK:
-            media["copyUsingHardlinks"] = cfg["hardlinks"]
+            media.update(media_changes)
             request("PUT", f"{base}/config/mediamanagement/{media['id']}", headers, body=media)
+
+    if cfg.get("upgrades") is False:
+        disable_upgrades(base, headers)
 
     have = {r["path"].rstrip("/") for r in request("GET", f"{base}/rootfolder", headers)}
     for path in cfg.get("root_folders", []):
@@ -416,34 +427,73 @@ def arr(name, host, key, cfg, auth, qbit):
         assign_profile(name, base, headers, profile["name"], profile["assign_to_existing"])
 
 
+def disable_upgrades(base, headers):
+    """A file that was downloaded is never replaced by a better one: "Upgrades Allowed" off in EVERY quality profile."""
+    for profile in request("GET", f"{base}/qualityprofile", headers):
+        if profile.get("upgradeAllowed"):
+            note(f"quality profile '{profile['name']}': upgrades off")
+            if not CHECK:
+                profile["upgradeAllowed"] = False
+                try:
+                    request("PUT", f"{base}/qualityprofile/{profile['id']}", headers, body=profile)
+                except ApiError as error:
+                    problem(f"quality profile '{profile['name']}': {error}")
+
+
 def apply_release_profile(base, headers, cfg):
-    """Sonarr release profile: refuse releases published before the episode aired (fake files appear the day before)."""
+    """Sonarr release profile: refuse releases published before the episode aired (newer Sonarr only) and releases whose
+    title ends with an executable extension (a fake: real torrent names never do)."""
+    ignored = list(cfg.get("ignored") or [])
+    want_air = bool(cfg.get("reject_unaired", True))
+    existing = next((p for p in request("GET", f"{base}/releaseprofile", headers) if p.get("name") == RELEASE_PROFILE_NAME), None)
+    supports_air = existing is None or "airDateRestriction" in existing  # older Sonarr has no such field
     wanted = {
-        "name": RELEASE_PROFILE_NAME, "enabled": True, "required": [], "ignored": list(cfg.get("ignored") or []),
-        "airDateRestriction": bool(cfg.get("reject_unaired", True)), "airDateGracePeriod": int(cfg.get("grace_days", 0)),
+        "name": RELEASE_PROFILE_NAME, "enabled": True, "required": [], "ignored": ignored,
+        "airDateRestriction": want_air and supports_air, "airDateGracePeriod": int(cfg.get("grace_days", 0)),
         "allowSeasonPackWithoutAllEpisodesAired": False, "indexerId": 0, "tags": [], "excludedTags": [],
     }
-    existing = next((p for p in request("GET", f"{base}/releaseprofile", headers) if p.get("name") == RELEASE_PROFILE_NAME), None)
-    summary = (f"reject unaired releases (grace {wanted['airDateGracePeriod']} d)" if wanted["airDateRestriction"] else "no air date rule")
-    if wanted["ignored"]:
-        summary += f", ignore {len(wanted['ignored'])} term(s)"
+
+    def summary(air):
+        parts = [f"reject unaired releases (grace {wanted['airDateGracePeriod']} d)"] if air else []
+        if ignored:
+            parts.append(f"ignore {len(ignored)} title pattern(s)")
+        return ", ".join(parts) or "nothing to enforce"
+
     if existing is not None:
-        keys = ("enabled", "ignored", "airDateRestriction", "airDateGracePeriod")
+        keys = ("enabled", "ignored") + (("airDateRestriction", "airDateGracePeriod") if supports_air else ())
         if all(existing.get(k) == wanted[k] for k in keys):
-            print("  release profile: ok")
+            print("  release profile: ok" + ("" if supports_air or not want_air else " (this Sonarr has no air-date rule yet: title patterns only)"))
             return
-        note(f"release profile updated: {summary}")
+        note(f"release profile updated: {summary(wanted['airDateRestriction'])}")
         if not CHECK:
             try:
                 request("PUT", f"{base}/releaseprofile/{existing['id']}", headers, body={**existing, **wanted})
             except ApiError as error:
                 problem(f"release profile: {error}")
         return
-    note(f"release profile created: {summary}")
-    if not CHECK:
-        try:
-            request("POST", f"{base}/releaseprofile", headers, body=wanted)
-        except ApiError as error:
+
+    if CHECK:
+        note(f"release profile created: {summary(want_air)}")
+        return
+    try:
+        request("POST", f"{base}/releaseprofile", headers, body=wanted)
+        made = next((p for p in request("GET", f"{base}/releaseprofile", headers) if p.get("name") == RELEASE_PROFILE_NAME), {})
+        if wanted["airDateRestriction"] and "airDateRestriction" not in made:  # accepted, but this Sonarr ignores the field
+            note(f"release profile created (this Sonarr has no air-date rule yet, needs a newer version): {summary(False)}")
+        else:
+            note(f"release profile created: {summary(wanted['airDateRestriction'])}")
+    except ApiError as error:
+        if "Must contain" in str(error) and ignored:
+            # older Sonarr: no air-date rule, a profile needs at least one term. Keep the title patterns only.
+            wanted["airDateRestriction"] = False
+            try:
+                request("POST", f"{base}/releaseprofile", headers, body=wanted)
+                note(f"release profile created (this Sonarr has no air-date rule yet, needs a newer version): {summary(False)}")
+            except ApiError as second:
+                problem(f"release profile: {second}")
+        elif "Must contain" in str(error):
+            problem("this Sonarr has no air-date rule yet (needs a newer version) and `ignored` in arr.yml is empty: nothing to enforce")
+        else:
             problem(f"release profile: {error}")
 
 

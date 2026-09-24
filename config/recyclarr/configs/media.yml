@@ -82,8 +82,8 @@ sonarr:
       - trash_id: 72dae194fc92bf828f32cde7744e51a1 # WEB-1080p
         name: TV - best available
         upgrade:
-          allowed: true
-          until_quality: WEB 1080p       # once an episode is 1080p WEB it is not replaced any more
+          allowed: false                 # a downloaded episode is never replaced by a better one
+          until_quality: WEB 1080p       # required by Recyclarr next to a qualities list; meaningless while upgrades are off
         qualities:
           - name: WEB 1080p
             qualities: [WEBDL-1080p, WEBRip-1080p]
@@ -176,8 +176,8 @@ radarr:
       - trash_id: d1d67249d3890e49bc12e275d989a7e9 # HD Bluray + WEB
         name: Movies - best available
         upgrade:
-          allowed: true
-          until_quality: Bluray-2160p    # a movie keeps being upgraded until it is a 4K Bluray
+          allowed: false                 # a downloaded movie is never replaced by a better one
+          until_quality: Bluray-2160p    # required by Recyclarr next to a qualities list; meaningless while upgrades are off
         qualities:
           - name: Bluray-2160p
           - name: WEB 2160p
