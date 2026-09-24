@@ -20,6 +20,13 @@ qbittorrent:
     incomplete_files_ext: true                  # unfinished files get .!qB, so nothing can import or scan them half-done
     upnp: false                      # useless behind Mullvad (no port forwarding)
     current_network_interface: tun0  # refuse to use anything but the VPN interface
+    # Queue limits (qBittorrent's defaults are 3 downloads / 5 torrents / 3 uploads, which leaves most of them "Queued").
+    # Generous on purpose: seeding torrents (3 days) count towards max_active_torrents too.
+    queueing_enabled: true
+    max_active_downloads: 20
+    max_active_torrents: 60
+    max_active_uploads: 30
+    dont_count_slow_torrents: true              # stalled/slow torrents don't take a slot
   # Clean-up of finished downloads. Counted as days of SEEDING after the torrent finished. Your library keeps its
   # files because Sonarr/Radarr import by hardlink (`hardlinks: true` below). Public trackers only: a private
   # tracker wants a ratio or a longer seeding time.
