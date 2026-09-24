@@ -1,0 +1,4 @@
+.env
+*.key
+wireguard_private_key
+wg_confs/
