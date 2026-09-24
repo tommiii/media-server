@@ -1,0 +1,126 @@
+# yaml-language-server: $schema=https://schemas.recyclarr.dev/v8/config-schema.json
+#
+# Synced by the `recyclarr` container daily (it does NOT sync on start-up: run the first one by hand,
+#   docker compose exec recyclarr recyclarr sync ).
+# Recyclarr shares gluetun's network namespace, so Sonarr/Radarr are on localhost.
+# API keys come from the container environment (.env -> SONARR_API_KEY / RADARR_API_KEY).
+#
+# Profiles/formats are the TRaSH Guides ones. Templates with more options (2160p, remux, anime, ...):
+# https://github.com/recyclarr/config-templates
+#
+# FILE SIZE LIMITS live in the `quality_definition` blocks below, in MB per minute of runtime:
+#   size = value x runtime.  Radarr: a 120 min film.  Sonarr: per episode, a 45 min episode.
+#   Releases above `max` are rejected, releases closest to `preferred` win among equals, below `min` are rejected.
+#   TRaSH's own values are "max 2000, preferred 1999" (= unlimited, biggest wins): overridden here on purpose.
+#
+# Preview what would change without touching anything:
+#   docker compose exec recyclarr recyclarr sync --preview
+
+sonarr:
+  series:
+    base_url: http://localhost:8989
+    api_key: !env_var SONARR_API_KEY
+
+    quality_definition:
+      type: series
+      # MB/min per episode (45 min episode: 60 -> 2.7 GB, 100 -> 4.5 GB, 150 -> 6.7 GB). `min` stays at TRaSH's value.
+      qualities:
+        - name: WEBDL-1080p
+          preferred: 25
+          max: 60
+        - name: WEBRip-1080p
+          preferred: 25
+          max: 60
+        - name: Bluray-1080p
+          preferred: 60
+          max: 100
+        - name: Bluray-1080p Remux
+          preferred: 75
+          max: 100
+        - name: WEBDL-2160p
+          preferred: 60
+          max: 150
+        - name: WEBRip-2160p
+          preferred: 60
+          max: 150
+        - name: HDTV-2160p
+          preferred: 60
+          max: 150
+        - name: Bluray-2160p
+          preferred: 120
+          max: 200
+        - name: Bluray-2160p Remux
+          preferred: 190
+          max: 200
+
+    quality_profiles:
+      - trash_id: 72dae194fc92bf828f32cde7744e51a1 # WEB-1080p
+        reset_unmatched_scores:
+          enabled: true
+
+    custom_format_groups:
+      add:
+        - trash_id: 158188097a58d7687dee647e04af0da3 # [Optional] Golden Rule HD
+          exclude:
+          select:
+        - trash_id: 85fae4a2294965b75710ef2989c850eb # [Streaming Services] HD/UHD boost
+          exclude:
+        # Penalizes BR-DISK, LQ, LQ (Release Title), Extras, Upscaled, ...: the fake/low-quality
+        # releases that are most often the ones carrying junk instead of video.
+        - trash_id: 59c3af66780d08332fdc64e68297098f # [Unwanted] Unwanted Formats
+          exclude:
+          select:
+      skip:
+
+radarr:
+  movies:
+    base_url: http://localhost:7878
+    api_key: !env_var RADARR_API_KEY
+
+    quality_definition:
+      type: movie
+      # MB/min (120 min film: 30 -> 3.6 GB, 60 -> 7.2 GB, 110 -> 13 GB, 160 -> 19 GB, 200 -> 24 GB).
+      # `min` stays at TRaSH's value. Remux caps sit just above their minimum, so remuxes never fit (>40 GB).
+      qualities:
+        - name: WEBDL-1080p
+          preferred: 30
+          max: 60
+        - name: WEBRip-1080p
+          preferred: 30
+          max: 60
+        - name: Bluray-1080p
+          preferred: 70
+          max: 110
+        - name: Remux-1080p
+          preferred: 105
+          max: 110
+        - name: WEBDL-2160p
+          preferred: 100
+          max: 160
+        - name: WEBRip-2160p
+          preferred: 100
+          max: 160
+        - name: HDTV-2160p
+          preferred: 100
+          max: 160
+        - name: Bluray-2160p
+          preferred: 150
+          max: 200
+        - name: Remux-2160p
+          preferred: 190
+          max: 200
+
+    quality_profiles:
+      - trash_id: d1d67249d3890e49bc12e275d989a7e9 # HD Bluray + WEB
+        reset_unmatched_scores:
+          enabled: true
+
+    custom_format_groups:
+      add:
+        - trash_id: f8bf8eab4617f12dfdbd16303d8da245 # [Optional] Golden Rule HD
+          exclude:
+          select:
+        - trash_id: a3ac6af01d78e4f21fcb75f601ac96df # [Unwanted] Unwanted Formats
+          exclude:
+          select:
+      skip:
