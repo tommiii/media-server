@@ -58,6 +58,9 @@ prowlarr:
   flaresolverr:
     host: http://localhost:8191/
     tag: flaresolverr                # give this tag to the indexers that need Cloudflare solving
+  # Releases with fewer seeders are rejected by Sonarr/Radarr (they pick the next best one instead). It goes into
+  # Prowlarr's app profiles and reaches every indexer that has no minimum of its own. Default in Prowlarr: 1.
+  minimum_seeders: 5
   apps:
     sonarr:
       prowlarr_url: http://localhost:9696

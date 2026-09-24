@@ -496,6 +496,21 @@ def prowlarr_indexers(base, headers, items, drop_orphans=False):
                 problem(f"indexer {definition}: {error}")
 
 
+def minimum_seeders(base, headers, wanted):
+    """Prowlarr sends Sonarr/Radarr each indexer's minimum seeders, or its app profile's when the indexer has none."""
+    for profile in request("GET", f"{base}/appprofile", headers):
+        if profile.get("minimumSeeders") != wanted:
+            note(f"app profile '{profile['name']}': minimum seeders {profile.get('minimumSeeders')} -> {wanted}")
+            if not CHECK:
+                profile["minimumSeeders"] = wanted
+                try:
+                    request("PUT", f"{base}/appprofile/{profile['id']}", headers, body=profile)
+                except ApiError as error:
+                    problem(f"app profile '{profile['name']}': {error}")
+        else:
+            print(f"  app profile '{profile['name']}': minimum seeders {wanted}: ok")
+
+
 def prowlarr(host, key, cfg, auth, keys):
     print("Prowlarr")
     base = f"http://{host}:{PORTS['prowlarr']}{API['prowlarr']}"
@@ -507,6 +522,8 @@ def prowlarr(host, key, cfg, auth, keys):
         tag_id = ensure_tag(base, headers, proxy.get("tag", "flaresolverr"))
         upsert_provider(base, headers, "indexerproxy", "FlareSolverr", "FlareSolverr", {"host": proxy["host"]}, tags=[tag_id])
 
+    if cfg.get("minimum_seeders"):
+        minimum_seeders(base, headers, int(cfg["minimum_seeders"]))
     prowlarr_indexers(base, headers, cfg.get("indexers"), cfg.get("remove_orphaned_indexers", False))
 
     for app, settings in (cfg.get("apps") or {}).items():

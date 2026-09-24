@@ -191,7 +191,7 @@ What `apply_arr_config.py` does (`--check` shows it without changing anything):
 | API keys | Reads the Sonarr, Radarr and Prowlarr keys from their `config.xml` and the Plex token from `Preferences.xml`, and writes them into `.env` if empty (Homepage and Recyclarr use them) |
 | qBittorrent | Signs in (on the first start with the temporary password from `docker logs`), sets your web UI login, finished downloads in `/data/downloads/complete` and unfinished ones in `/data/downloads/incomplete` (partial files get a `.!qB` extension), UPnP off, network interface `tun0`, and generates an API key into `.env` |
 | Sonarr / Radarr | Forms login (always required), hardlinks on, root folders, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), removes the old Deluge client |
-| Prowlarr | Forms login, FlareSolverr proxy with tag `flaresolverr`, **the indexers listed in `config/arr.yml`** (Prowlarr tests each one), links to Sonarr and Radarr (full sync, so the indexers reach both), removes indexers whose definition Prowlarr no longer has (switch: `remove_orphaned_indexers`) |
+| Prowlarr | Forms login, FlareSolverr proxy with tag `flaresolverr`, **the indexers listed in `config/arr.yml`** (Prowlarr tests each one), links to Sonarr and Radarr (full sync, so the indexers reach both), removes indexers whose definition Prowlarr no longer has (switch: `remove_orphaned_indexers`), sets the **minimum seeders** (`minimum_seeders`, 5) that Sonarr/Radarr require |
 | Plex | Turns *Remote Access* on with a manually forwarded port (32400), sets *LAN Networks* (your `LAN_SUBNETS`), adds the URLs of `PLEX_CUSTOM_URLS` if you set it, transcodes in RAM (`/transcode`) with hardware acceleration on, creates the *Movies* and *TV Shows* libraries |
 
 To change anything, edit `config/arr.yml` and run the script again. Passwords and keys stay in `.env`: `config/arr.yml` only contains `${VAR}` placeholders. If a step reports a problem it says what to fix and carries on with the rest; the exit code is 1 if anything failed. If a login does not seem to apply, `docker compose restart sonarr radarr prowlarr`.
@@ -356,6 +356,47 @@ What you can turn, from the biggest effect to the smallest:
 5. **One-off exceptions**: *Interactive Search* still lists rejected releases (with the reason, e.g. "larger than maximum allowed") and lets you force a grab.
 
 Files you already have are not touched. Rejections show up in *Interactive Search* and in the app logs; the ceiling is checked at grab time, before anything is sent to qBittorrent.
+
+## How a release is chosen, and what to do when a download crawls
+
+Sonarr and Radarr first drop the releases that fail the rules (wrong quality, outside the size limits, too few seeders, executables...), then rank the rest. The first rule that tells two releases apart decides:
+
+| # | Rule | Notes |
+|---|---|---|
+| 1 | **Quality** | Position in the quality profile (higher wins), then Proper/Repack |
+| 2 | **Custom format score** | TRaSH scores: reliable release groups, penalties for LQ and fake releases |
+| 3 | Indexer priority | One number per indexer in Prowlarr (Sonarr also prefers season packs here) |
+| 4 | **Seeders**, then peers | On a logarithmic scale: 1–9, 10–99 and 100+ seeders are three bands, 20 and 90 are equal |
+| 5 | **Size** | Closest to the `preferred` size of `config/recyclarr/configs/media.yml`, in bands of 200 MB |
+
+So seeders never outweigh quality: a better release with 2 seeders beats a slightly worse one with 500. What protects you from dead torrents is the **minimum seeders** rule (`minimum_seeders` in `config/arr.yml`, default 5): a release below it is rejected and the next best one is used. It is set once in Prowlarr's app profile and reaches every indexer (an indexer with its own minimum keeps it). The first acceptable release is grabbed immediately; if a better one shows up later and the quality cutoff is not reached yet, it is upgraded.
+
+**A download is slow: find out why.**
+
+```bash
+set -a; . ./.env; set +a
+# every torrent: state, speed, connected seeders / seeders in the swarm, availability, progress
+curl -s -H "Authorization: Bearer $QBITTORRENT_API_KEY" "http://$LAN_IP:8080/api/v2/torrents/info" | python3 -c "
+import sys,json
+for t in json.load(sys.stdin):
+    print('%-42.42s %-14s %6.2f MB/s  seed %s/%s  avail %.2f  %3.0f%%' % (t['name'], t['state'], t['dlspeed']/1e6, t['num_seeds'], t['num_complete'], t['availability'], t['progress']*100))"
+# speed of the VPN itself (Sonarr shares Gluetun's network)
+docker exec sonarr curl -s -o /dev/null -w "%{speed_download} bytes/s\n" https://proof.ovh.net/files/100Mb.dat
+```
+
+- **Few seeders (`seed 0/4`) or availability below 1:** the torrent is poor, nothing on your side can fix it. Drop it and let Radarr/Sonarr pick another (below).
+- **State `queuedDL`:** qBittorrent runs at most 3 downloads at a time; the others wait.
+- **The VPN test is slow:** try another exit in `VPN_COUNTRIES` (comma separated list allowed). Mullvad no longer offers port forwarding, so only peers you can reach connect to you, which hurts poorly seeded torrents most.
+- **`dl_limit` not 0 or a scheduler on** in qBittorrent: check `GET /api/v2/app/preferences`.
+
+Drop a stuck release, blocklist it and search again (Radarr; Sonarr uses port 8989 and its own key):
+
+```bash
+curl -s -H "X-Api-Key: $RADARR_API_KEY" "http://$LAN_IP:7878/api/v3/queue" | python3 -c "
+import sys,json
+for r in json.load(sys.stdin)['records']: print(r['id'], r['title'])"
+curl -s -X DELETE -H "X-Api-Key: $RADARR_API_KEY" "http://$LAN_IP:7878/api/v3/queue/ID?removeFromClient=true&blocklist=true"
+```
 
 ## 7. Day to day
 
