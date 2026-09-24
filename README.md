@@ -49,10 +49,10 @@ All scripts can be run from any directory; they find the repository root themsel
 
 - A **Linux** host with Docker Engine and **Docker Compose v2.20+** (`docker compose version`).
 - `/dev/net/tun` on the host (`ls /dev/net/tun`; if missing: `sudo modprobe tun`).
-- A **fixed LAN IP** for the server (set a DHCP reservation on your router). The UIs are bound to that address; if it changes, the containers will not start.
+- A **fixed LAN IP** for the server (set a DHCP reservation on your router). The web UIs are bound to the address in `LAN_IP` (your LAN address, or the server's Tailscale address); if it changes, the containers will not start.
 - A [Mullvad](https://mullvad.net) account.
 - To use Plex from outside your home: a router port forward of **TCP 32400** to the server, and an ISP that gives you a reachable public IPv4 (not CGNAT).
-- `python3` with PyYAML for the setup script: `sudo apt install python3-yaml`.
+- `python3` with PyYAML for the setup script: `sudo apt install python3-yaml`. Also `curl` (leak test) and `file` (media audit): `sudo apt install curl file`.
 - Optional: an Intel GPU (`/dev/dri`) for Plex hardware transcoding (needs Plex Pass). No GPU? Remove the `devices:` block of `plex` in `compose.yml`.
 
 ## 2. Get the code and create `.env`
@@ -81,6 +81,8 @@ Edit `.env`:
 | `WIREGUARD_ADDRESSES` | from Mullvad, see step 4 |
 | `VPN_COUNTRIES` | Mullvad exit country, English name (`Netherlands`, `Sweden`, `Switzerland`, `Germany`, ...) |
 | `SONARR_API_KEY`, `RADARR_API_KEY`, `PROWLARR_API_KEY`, `QBITTORRENT_API_KEY`, `PLEX_TOKEN` | leave empty: `apply_arr_config.py` fills them in |
+| *Optional:* `PLEX_BIND_IP`, `PLEX_CUSTOM_URLS`, `HOMEPAGE_ALLOWED_HOSTS` | see the comments in `.env.sample`: address Plex is published on (default: all IPv4), extra URLs Plex advertises, extra host names allowed to open the dashboard |
+| *Optional:* `LOG_LEVEL`, `LOG_HTML`, `CAPTCHA_SOLVER` | FlareSolverr settings (defaults `info`, `false`, `none`) |
 
 Put values that contain spaces, `$` or `#` in single quotes, e.g. `ARR_PASSWORD='my pass#1'`: the file is read by Docker Compose, by the shell (step 3) and by the scripts.
 
@@ -442,7 +444,7 @@ git pull && ./scripts/restart_services.sh && ./scripts/check_vpn_connection.sh
 
 Something broke? `git revert <merge commit>`, then the same command.
 
-**Backup**: `$BASE_DIR/services` (all app configs) and the Mullvad key file. Media does not need the containers.
+**Backup**: `$BASE_DIR/services` (all app databases and configs: libraries, watch history, API keys), the Mullvad key file and your `.env` (passwords and tokens: keep the copy encrypted). Media does not need the containers. Nothing here is backed up automatically.
 
 ## Security model
 
@@ -455,6 +457,7 @@ Something broke? `git revert <merge commit>`, then the same command.
 - All containers use `no-new-privileges`; every container except Gluetun also uses `cap_drop: ALL` (only the capabilities needed by the linuxserver init are added back). If a container refuses to start, remove `cap_drop` for that service and check `docker compose logs <service>`.
 - The Mullvad key is a Docker secret and `.env` is git-ignored.
 - **`./scripts/leak_test.sh` proves the VPN protection instead of assuming it.** It checks that every running container, except `gluetun`, `plex` and `homepage`, lives inside gluetun's network (so a service you add later without `network_mode: service:gluetun`, a second torrent client for example, is flagged as a leak *before* it matters), that the exit IP is a Mullvad server and not your home IP, that DNS goes through gluetun, and that qBittorrent is bound to `tun0`. `--kill-switch` also takes the tunnel down for a moment and checks that the torrent client is left with no connectivity at all (downloads pause for about 30 seconds). Run it after every change to `compose.yml`; `setup.sh` runs it too. What a VPN does not hide: your ISP sees that you use Mullvad (not what you download), Plex knows your library titles and watch history through your Plex account, and accounts on private trackers are yours.
+- **Tailscale ACLs:** everything on your tailnet that can reach the server can reach these UIs. In the Tailscale admin console, tag the server and allow only your own devices to its ports (80, 8080, 8989, 7878, 9696, 32400), so a compromised device on the tailnet cannot reach them all.
 - Every web UI has a login (set from `ARR_*` / `QBITTORRENT_*` / `HOMEPAGE_AUTH_PASSWORD` in `.env`). The apps run inside the VPN but they are still reachable by anyone who can reach `LAN_IP`.
 - `services/` (each app's database and API keys) and `.env` are git-ignored: never commit them.
 
@@ -465,6 +468,7 @@ Something broke? `git revert <merge commit>`, then the same command.
 | `required variable LAN_IP is missing` | Fill `LAN_IP` and `LAN_SUBNETS` in `.env` |
 | `gluetun` stays `unhealthy` / restarts | `docker compose logs gluetun`. Check: private key file has no trailing newline or spaces; `WIREGUARD_ADDRESSES` is the IPv4 `/32` only; the key is registered in your Mullvad account (generated on the site) and you are within 5 devices; `VPN_COUNTRIES` is a valid English country name; no other client uses the same key |
 | `/dev/net/tun: no such file` | `sudo modprobe tun` (persist with `echo tun \| sudo tee /etc/modules-load.d/tun.conf`) |
+| After a reboot the web UIs are not up although `docker compose ps` looks fine, and `LAN_IP` is the Tailscale address | Docker started before Tailscale, so the address did not exist yet. `sudo systemctl edit docker` and add `[Unit]`, `After=tailscaled.service`, `Wants=tailscaled.service`; then reboot once and check `docker compose ps` |
 | `cannot assign requested address` / port bind errors | `LAN_IP` is not an address of this host, or the port (80, 8080, 32400, ...) is already used by something else |
 | UIs not reachable from your PC | Your PC's subnet must be in `LAN_SUBNETS`, and you must use `http://<LAN_IP>:<port>` |
 | Sonarr/Radarr cannot reach qBittorrent or Prowlarr | Use `localhost`, not container names (they share a network namespace) |
