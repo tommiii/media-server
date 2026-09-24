@@ -392,10 +392,11 @@ def arr(name, host, key, cfg, auth, qbit):
 
     profile = cfg.get("quality_profile")
     if profile and profile.get("assign_to_existing"):
-        assign_profile(name, base, headers, profile["name"])
+        assign_profile(name, base, headers, profile["name"], profile["assign_to_existing"])
 
 
-def assign_profile(name, base, headers, profile_name):
+def assign_profile(name, base, headers, profile_name, mode):
+    """mode True: every title. mode "without_files": only titles that have no file yet (nothing to replace)."""
     profiles = request("GET", f"{base}/qualityprofile", headers)
     profile = next((p for p in profiles if p["name"].lower() == profile_name.lower()), None)
     if profile is None:
@@ -403,11 +404,17 @@ def assign_profile(name, base, headers, profile_name):
         return
     sonarr = name == "sonarr"
     items = request("GET", f"{base}/{'series' if sonarr else 'movie'}", headers)
+    if mode == "without_files":
+        has_files = (lambda i: bool(i.get("statistics", {}).get("episodeFileCount"))) if sonarr else (lambda i: bool(i.get("hasFile")))
+        items = [i for i in items if not has_files(i)]
+        scope = "titles without files"
+    else:
+        scope = "titles"
     ids = [i["id"] for i in items if i.get("qualityProfileId") != profile["id"]]
     if not ids:
-        print(f"  quality profile '{profile_name}': all {len(items)} titles already use it")
+        print(f"  quality profile '{profile_name}': all {len(items)} {scope} already use it")
         return
-    note(f"{len(ids)} of {len(items)} titles -> quality profile '{profile_name}'")
+    note(f"{len(ids)} of {len(items)} {scope} -> quality profile '{profile_name}'")
     if not CHECK:
         body = {"seriesIds" if sonarr else "movieIds": ids, "qualityProfileId": profile["id"]}
         request("PUT", f"{base}/{'series' if sonarr else 'movie'}/editor", headers, body=body)

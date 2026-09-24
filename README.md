@@ -180,7 +180,7 @@ Everything is configured **from files**, without opening the UIs: `config/arr.ym
 | `apply_arr_config.py` | See the table below |
 | Recreate | Containers that read the new API keys (Homepage, Recyclarr) |
 | Recyclarr | Syncs the TRaSH quality profiles, custom formats and size limits |
-| `apply_arr_config.py` again | Assigns the Recyclarr profiles to existing titles **only if you enable `assign_to_existing`** (off by default, see below) |
+| `apply_arr_config.py` again | Puts the Recyclarr quality profiles on the titles that have **no file yet** (see below) |
 | `apply_download_safety.py` | File filters (executables) and size ceiling |
 | `check_vpn_connection.sh` | Verifies that everything goes through Mullvad |
 
@@ -190,7 +190,7 @@ What `apply_arr_config.py` does (`--check` shows it without changing anything):
 |---|---|
 | API keys | Reads the Sonarr, Radarr and Prowlarr keys from their `config.xml` and the Plex token from `Preferences.xml`, and writes them into `.env` if empty (Homepage and Recyclarr use them) |
 | qBittorrent | Signs in (on the first start with the temporary password from `docker logs`), sets your web UI login, finished downloads in `/data/downloads/complete` and unfinished ones in `/data/downloads/incomplete` (partial files get a `.!qB` extension), UPnP off, network interface `tun0`, and generates an API key into `.env` |
-| Sonarr / Radarr | Forms login (always required), hardlinks on, root folders, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), removes the old Deluge client |
+| Sonarr / Radarr | Forms login (always required), hardlinks on, root folders, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), removes the old Deluge client, puts the Recyclarr quality profile on the titles that have no file yet |
 | Prowlarr | Forms login, FlareSolverr proxy with tag `flaresolverr`, **the indexers listed in `config/arr.yml`** (Prowlarr tests each one), links to Sonarr and Radarr (full sync, so the indexers reach both), removes indexers whose definition Prowlarr no longer has (switch: `remove_orphaned_indexers`), sets the **minimum seeders** (`minimum_seeders`, 5) that Sonarr/Radarr require |
 | Plex | Turns *Remote Access* on with a manually forwarded port (32400), sets *LAN Networks* (your `LAN_SUBNETS`), adds the URLs of `PLEX_CUSTOM_URLS` if you set it, transcodes in RAM (`/transcode`) with hardware acceleration on, creates the *Movies* and *TV Shows* libraries |
 
@@ -201,7 +201,7 @@ Notes:
 - **Plex** is the least predictable part, because its web API is not versioned like the *arr ones. The script tries the known variants for creating a library and prints what failed. Settings this Plex does not have are skipped. Hardware transcoding needs Plex Pass and a working `/dev/dri` (see 6.4, point 4): the script only flips the switch.
 - **First qBittorrent start:** if you did not set `QBITTORRENT_PASSWORD` yet, the script signs in with the temporary password and asks you to set one in `.env` and run again (it does not create the download clients until then).
 - **Changing a password later:** the apps hide stored passwords and keys, so the script cannot compare them. Change it in `.env` and run `./scripts/apply_arr_config.py --force`.
-- **Quality profiles and your existing library:** Recyclarr creates the profiles, but the script does **not** move your existing titles to them unless you set `assign_to_existing: true` in `config/arr.yml`. Be careful: a file whose quality is not allowed by the profile counts as "upgradable" and any allowed release can replace it. The synced profiles are 1080p only, so enabling it would let your existing 2160p/remux files be replaced by smaller ones. Enable it only if everything you own already fits the profile (or use a 2160p profile from Recyclarr's templates). New titles use the profile you pick in the app's *Add* form.
+- **Which quality gets downloaded is decided by the quality profile of *that title*.** Recyclarr creates the 1080p profiles, but a title keeps whatever profile it already has, and an old profile that allows 2160p will happily pick a 50 GB 4K release. That is why the script (`assign_to_existing: without_files` in `config/arr.yml`) puts the Recyclarr profile on every title that **has no file yet**: nothing exists to be replaced, so it is safe, and it also covers movies that are missing or downloading. Titles that already have a file are left alone on purpose: a file whose quality is not in the profile counts as "upgradable" and any allowed release can replace it (the synced profiles are 1080p only, so `true`, which moves every title, would let your 2160p/remux files be replaced by smaller ones). `false` disables it. Titles you add later start with the profile selected in the app's *Add* form; the script catches them the next time it runs (see the cron line in section 7).
 
 ### Open the Plex port on your router
 
@@ -409,6 +409,13 @@ docker compose logs -f gluetun                   # VPN logs
 ./scripts/apply_arr_config.py --check            # is the *arr setup still what config/arr.yml says? (changes nothing)
 ./scripts/apply_download_safety.py               # re-apply file filters (after adding indexers)
 ./scripts/restart_services.sh                    # pull + recreate everything
+```
+
+To make titles you add later follow the 1080p profile without thinking about it, run the configuration script regularly (it only changes what differs, and it is quiet when nothing does):
+
+```bash
+# crontab -e
+*/30 * * * * cd /path/to/media-server && ./scripts/apply_arr_config.py >> /tmp/apply_arr_config.log 2>&1
 ```
 
 **Updates: Renovate opens a pull request, you merge it.** Images are pinned to exact versions (no auto-updater, no Docker socket for anybody). [Renovate](https://github.com/apps/renovate) watches `compose.yml` and proposes new versions as pull requests; nothing changes on the server until you merge one and pull it.
