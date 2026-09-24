@@ -205,9 +205,19 @@ def qbittorrent(host, cfg, env):
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
     user, password = cfg["username"], cfg.get("password") or ""
 
+    reasons = []
+
     def login(u, p):
-        answer = request("POST", f"{base}/api/v2/auth/login", referer, form={"username": u, "password": p}, opener=opener)
-        return isinstance(answer, str) and answer.strip() == "Ok."
+        # qBittorrent >= 5.2 answers 204 (empty) on success and 401 on failure; older versions 200 "Ok." / "Fails."
+        try:
+            answer = request("POST", f"{base}/api/v2/auth/login", referer, form={"username": u, "password": p}, opener=opener)
+        except ApiError as error:
+            reasons.append(str(error))
+            return False
+        if answer is None or (isinstance(answer, str) and answer.strip() == "Ok."):
+            return True
+        reasons.append(f"answered {answer!r}")
+        return False
 
     logged_in = bool(password) and login(user, password)
     first_run = False
@@ -216,8 +226,12 @@ def qbittorrent(host, cfg, env):
         if temp and login("admin", temp):
             logged_in, first_run = True, True
     if not logged_in:
-        problem("cannot sign in. Set QBITTORRENT_USERNAME/QBITTORRENT_PASSWORD in .env to the web UI "
-                "credentials (or restart the container to get a new temporary password) and run again")
+        why = reasons[0] if reasons else "no password set in .env and no temporary password in the container log"
+        hint = ("this address is banned after too many failed logins: docker compose restart qbittorrent"
+                if any("403" in r for r in reasons) else
+                "set QBITTORRENT_USERNAME/QBITTORRENT_PASSWORD in .env to the credentials qBittorrent really has "
+                "(or reset its password: README, troubleshooting) and run again")
+        problem(f"cannot sign in to qBittorrent as '{user}' ({why}). {hint}")
         return None
 
     wanted = dict(cfg.get("preferences") or {})
