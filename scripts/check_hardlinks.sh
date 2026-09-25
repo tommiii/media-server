@@ -54,28 +54,18 @@ fi
 
 echo "== 3. Finished downloads: hardlinked into the library?"
 VIDEO='\.(mkv|mp4|m4v|avi|mov|ts|m2ts|wmv|webm|mpg|mpeg)$'
-DANGER='\.(exe|msi|bat|cmd|com|scr|pif|lnk|vbs|vbe|js|jse|wsf|wsh|ps1|sh|jar|dll|apk|hta|reg|cpl|dmg|pkg)$'
 ARCHIVE='\.(rar|r[0-9][0-9]|zip|7z)$'
-linked=0; alone=0; alone_rows=""; danger_rows=""; archives=0
+linked=0; alone=0; alone_rows=""; archives=0
 now=$(date +%s)
 while IFS= read -r -d '' f; do
   rel=${f#"$complete"/}; lower=$(printf '%s' "$rel" | tr '[:upper:]' '[:lower:]')
   read -r nlink _ mtime size <<<"$(st "$f")"
-  if   [[ $lower =~ $DANGER ]];  then danger_rows+="$rel"$'\t'"$mtime"$'\t'"$size"$'\n'
-  elif [[ $lower =~ $ARCHIVE ]]; then archives=$((archives+1))
+  if   [[ $lower =~ $ARCHIVE ]]; then archives=$((archives+1))
   elif [[ $lower =~ $VIDEO ]];   then
     if [ "$nlink" -ge 2 ]; then linked=$((linked+1)); else alone=$((alone+1)); alone_rows+="${rel%%/*}"$'\t'"$mtime"$'\t'"$size"$'\n'; fi
   fi
 done < <(find "$complete" -type f -size +"$MIN_SIZE" -print0 2>/dev/null)
 ok "$linked finished video(s) are hardlinked into media/: deleting the download keeps the library copy"
-
-if [ -n "$danger_rows" ]; then
-  n=$(printf '%s' "$danger_rows" | grep -c .)
-  bad "$n executable/script file(s) were downloaded. They are fakes: never run them, delete them, and check that the file filters are on (./scripts/apply_download_safety.py --check):"
-  printf '%s' "$danger_rows" | while IFS=$'\t' read -r rel mtime size; do
-    printf '        %s  (%s MB, %s day(s) old)\n' "$rel" "$((size/1048576))" "$(( (now-mtime)/86400 ))"
-  done
-fi
 
 if [ "$alone" -gt 0 ]; then
   if grep -Eq '^[[:space:]]+only_after_import:[[:space:]]*true' config/arr.yml 2>/dev/null; then

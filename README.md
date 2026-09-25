@@ -12,10 +12,11 @@ Self-hosted media server where **everything that searches or downloads runs behi
 | Radarr | Movie automation | ✅ | `http://<LAN_IP>:7878` |
 | Recyclarr | Keeps quality profiles / custom formats in sync (TRaSH Guides) | ✅ | – |
 | Unpackerr | Extracts releases that come as archives so Sonarr/Radarr can import them | ✅ | – |
+| Cleanuparr | Removes downloads that will never finish (every file refused, stalled, cannot be imported) and makes Sonarr/Radarr search again | ✅ | `http://<LAN_IP>:11011` |
 | Plex | Media streaming, **reachable from the internet** (router port forward) | ❌ | `http://<any server address>:32400/web` |
 | Homepage | Dashboard with widgets (login required) | ❌ | `http://<LAN_IP>` |
 
-Prowlarr, FlareSolverr, Sonarr, Radarr, qBittorrent, Recyclarr and Unpackerr share Gluetun's network namespace: they have no network interface other than the VPN tunnel, so if the tunnel drops they simply have no connection (no leak). That is also why they talk to each other on `localhost`.
+Prowlarr, FlareSolverr, Sonarr, Radarr, qBittorrent, Recyclarr, Unpackerr and Cleanuparr share Gluetun's network namespace: they have no network interface other than the VPN tunnel, so if the tunnel drops they simply have no connection (no leak). That is also why they talk to each other on `localhost`.
 
 ---
 
@@ -23,7 +24,7 @@ Prowlarr, FlareSolverr, Sonarr, Radarr, qBittorrent, Recyclarr and Unpackerr sha
 
 1. `git clone <this repo> media-server && cd media-server`, then `cp .env.sample .env && chmod 600 .env` and fill in `.env` (step 2).
 2. Create the folders (step 3) and put your Mullvad key in place (step 4).
-3. Run **`./scripts/setup.sh`**: it starts everything and configures qBittorrent, Sonarr, Radarr, Prowlarr, Plex and the quality profiles from `config/arr.yml`, without you opening a web UI (section 6.0).
+3. Run **`./scripts/setup.sh`**: it starts everything and configures qBittorrent, Sonarr, Radarr, Prowlarr, Cleanuparr, Plex and the quality profiles from `config/arr.yml`, without you opening a web UI (section 6.0).
 4. **Open TCP port 32400 on your router** and point it to the server, so Plex works from outside your home (see [Open the Plex port on your router](#open-the-plex-port-on-your-router)).
 5. Open the dashboard at `http://<LAN_IP>` (password: `HOMEPAGE_AUTH_PASSWORD`).
 
@@ -36,10 +37,10 @@ compose.yml            the stack (containers, networks, ports)
 .env.sample            copy to .env and fill in (never committed)
 renovate.json          image update pull requests
 scripts/               setup.sh (one command for everything), apply_arr_config.py, apply_download_safety.py,
-                       leak_test.sh, check_hardlinks.sh,
+                       apply_cleanuparr_config.py, leak_test.sh, check_hardlinks.sh,
                        dedupe_downloads.py, cron.sh
 config/
-  arr.yml              desired state of qBittorrent, Sonarr, Radarr, Prowlarr (indexers) and Plex
+  arr.yml              desired state of qBittorrent, Sonarr, Radarr, Prowlarr (indexers), Cleanuparr and Plex
   recyclarr/           quality profiles and size limits (TRaSH)
   homepage/            dashboard
 services/              created on the server: each app's own data (git-ignored)
@@ -96,7 +97,7 @@ If Docker creates the folders itself they end up owned by root and the apps cann
 
 ```bash
 set -a; . ./.env; set +a
-mkdir -p "$BASE_DIR"/services/{gluetun,prowlarr,sonarr,radarr,qbittorrent,recyclarr,homepage,plex}
+mkdir -p "$BASE_DIR"/services/{gluetun,prowlarr,sonarr,radarr,qbittorrent,recyclarr,cleanuparr,homepage,plex}
 mkdir -p "$DATA_DIR"/data/{downloads/{complete,incomplete},media/{tv-shows,movies}}
 sudo chown -R "$PUID:$PGID" "$BASE_DIR/services" "$DATA_DIR/data"
 ```
@@ -162,7 +163,7 @@ If `gluetun` is not healthy, see [Troubleshooting](#troubleshooting).
 
 ## 6. Configure the apps
 
-Everything is configured **from files**, without opening the UIs: `config/arr.yml` describes the desired state of qBittorrent, Sonarr, Radarr, Prowlarr (indexers included) and Plex, and `./scripts/setup.sh` (or `./scripts/apply_arr_config.py` alone) applies it. Sections 6.1–6.4 describe the same settings by hand, for reference or if you prefer the UIs.
+Everything is configured **from files**, without opening the UIs: `config/arr.yml` describes the desired state of qBittorrent, Sonarr, Radarr, Prowlarr (indexers included), Cleanuparr and Plex, and `./scripts/setup.sh` (or `./scripts/apply_arr_config.py` alone) applies it. Sections 6.1–6.4 describe the same settings by hand, for reference or if you prefer the UIs.
 
 ### 6.0 Automatic setup (recommended)
 
@@ -186,6 +187,7 @@ Everything is configured **from files**, without opening the UIs: `config/arr.ym
 | Recyclarr | Syncs the TRaSH quality profiles, custom formats and size limits |
 | `apply_arr_config.py` again | Puts the Recyclarr quality profiles on the titles that have **no file yet** (see below) |
 | `apply_download_safety.py` | File filters (executables) and size ceiling |
+| `apply_cleanuparr_config.py` | Cleanuparr: account, connections, and the rules that remove stuck, stalled and unimportable downloads (6.7) |
 | `leak_test.sh` | Verifies that everything that searches or downloads goes through Mullvad (see the security model) |
 | `check_hardlinks.sh` | Diagnostic: are hardlinks really in place, and which finished downloads are not linked to the library (see below) |
 
@@ -316,7 +318,28 @@ docker compose exec recyclarr recyclarr sync               # first sync, now (th
 ```
 
 - **Recyclarr** reads `config/recyclarr/configs/media.yml` (in this repo, mounted read-only). It also sets the per-quality **size limits** ([File size](#file-size-what-is-configured)). It creates the quality profiles **Movies - best available** (Radarr) and **TV - best available** (Sonarr): TRaSH's profiles with their custom formats and scores, renamed and with the quality ladder of [How a release is chosen](#how-a-release-is-chosen-and-what-to-do-when-a-download-crawls). It does not touch your existing profiles or titles (see the warning in 6.0). For 2160p, remux or anime, take another template from https://github.com/recyclarr/config-templates and put it in `config/recyclarr/configs/`.
-- **`apply_download_safety.py`** (file filters and the Radarr size ceiling) is idempotent: run it again whenever Prowlarr adds indexers to Sonarr/Radarr (the setting it enforces is per indexer, see below).
+- **`apply_download_safety.py`** (file filters, taken from `blocked_files` in `config/arr.yml`, and the Radarr size ceiling) is idempotent: run it again whenever Prowlarr adds indexers to Sonarr/Radarr (the setting it enforces is per indexer, see below).
+
+### 6.7 Cleanuparr — `http://<LAN_IP>:11011`
+
+Sonarr and Radarr never drop a download on their own: a torrent that stalls, or whose files were all refused, stays in the queue for ever. **Cleanuparr** checks their queues every 5 minutes, removes what will never finish, blocklists that release and makes the app search again. Nothing to check by hand.
+
+Its settings live in its own database, so `setup.sh` (or `./scripts/apply_cleanuparr_config.py`, `--check` to preview) copies them there from the `cleanuparr:` section of `config/arr.yml`. The first run creates the admin account from `ARR_USERNAME` / `ARR_PASSWORD` (8+ characters) and saves its API key in `.env`. Edit `arr.yml` and run the script again: what it covers is overwritten if you change it in Cleanuparr's UI.
+
+| What it removes | When |
+|---|---|
+| A torrent whose files were **all refused** by qBittorrent (the stuck `.exe` case) | at once |
+| A **stalled** download (private torrents only leave the app's queue, they stay in qBittorrent) | 1 hour without progress |
+| A **failed import**, only for reasons another release would fix (`title mismatch`, `not found in the grabbed release`...); not while Unpackerr is extracting | 1 hour |
+| A magnet link that never gets its **metadata** | 1 hour |
+| **Malware Blocker**: files matching `blocked_files` are skipped, and the download is removed if nothing wanted is left. This covers **magnet links**, which the indexer check cannot see | 5 minutes |
+
+Slow downloads are not removed (a 4K film is slow behind Mullvad); an example rule is in `arr.yml`.
+
+- **Try it first:** `cleanuparr.general.dry_run: true` only logs what it would remove (Cleanuparr's *Events*).
+- **VPN down:** everything looks stalled, so it asks Gluetun's health server and skips the run.
+- **Only what Sonarr/Radarr grabbed:** a torrent you added by hand is left alone. `ignored_downloads` protects more.
+- **Not used:** its *Download Cleaner* (qBittorrent already deletes finished torrents, see [Clean-up](#clean-up-finished-downloads-are-deleted-after-3-days-the-library-keeps-its-files)) and its own file lists (they block `.rar`/`.zip`, which Unpackerr needs). The list is `blocked_files` in `arr.yml`; qBittorrent gets it from `apply_download_safety.py`, Cleanuparr from the file the script writes to `$BASE_DIR/services/cleanuparr/blocklist.txt`.
 
 ## Fake releases, executables and archives: how downloads are controlled
 
@@ -329,16 +352,18 @@ Torrent sites are full of fake releases: an `.exe` "codec", an archive with a pa
 | 3 | **Size limits** (Recyclarr) | Below the minimum MB per minute a release is rejected: a 3 MB "episode" never passes (a 45-minute WEB-DL 1080p must be at least ~700 MB) |
 | 4 | **Minimum seeders** (`minimum_seeders`, 10) | Rejects torrents nobody is sharing |
 | 5 | **Fail Downloads, per indexer** (set by `apply_download_safety.py`) | Reads the file list inside the `.torrent` **before** sending it to qBittorrent. A release with `.exe .bat .cmd .sh`, "potentially dangerous" files (`.lnk .scr .ps1 .vbs .arj .lzh .zipx`) or, in Sonarr, your extra extensions (`.msi .js .jar .dll .apk ...`) is rejected, blocklisted, and the next best release is tried. Look for *"Caution: Found executable..."* in Activity/History: that is it working |
-| 6 | **qBittorrent, *Excluded file names*** (set by `apply_download_safety.py`) | Whatever slips through (magnet links have no file list to inspect) is never written to disk if it matches `*.exe *.msi *.bat *.scr ...`. External-program hooks are disabled |
-| 7 | **Import** | Only files with a video extension are ever moved into the library. Everything else stays in `downloads/complete` and is deleted with the torrent after 3 days |
-| 8 | *(optional)* **`noexec` on the data disk** | In `/etc/fstab` add `noexec,nosuid,nodev` to the mount options of the disk that holds `DATA_DIR`: nothing stored there can be executed, whatever it is |
+| 6 | **qBittorrent, *Excluded file names*** (set by `apply_download_safety.py`) | Whatever slips through (magnet links have no file list to inspect) is never written to disk if it matches `blocked_files` in `config/arr.yml` (`*.exe *.msi *.bat *.scr ...`). External-program hooks are disabled |
+| 7 | **Cleanuparr Malware Blocker** (6.7) | Every 5 minutes it reads the file list of each download Sonarr/Radarr grabbed, **magnet links included** (qBittorrent has the list a moment after the start), skips the files of `blocked_files` and, when nothing wanted is left, removes the download, blocklists the release and searches again |
+| 8 | **Cleanuparr Queue Cleaner** (6.7) | A torrent whose files layer 6 refused ends at 0 bytes and would stay in the queue for ever: it is removed at once, blocklisted, and another release is searched |
+| 9 | **Import** | Only files with a video extension are ever moved into the library. Everything else stays in `downloads/complete` and is deleted with the torrent after 3 days |
+| 10 | *(optional)* **`noexec` on the data disk** | In `/etc/fstab` add `noexec,nosuid,nodev` to the mount options of the disk that holds `DATA_DIR`: nothing stored there can be executed, whatever it is |
 
 **Archives.** Some genuine releases (movies and series alike) are shipped as `.rar`, `.zip` or `.7z`. Sonarr and Radarr refuse to import them ("Found archive file, might need to be extracted") and qBittorrent does not extract, so without help the download is wasted. **Unpackerr** (a container in the VPN group) extracts the archives *of downloads that Sonarr/Radarr grabbed*, the extracted video is imported by hardlink like any other, and the extracted copy is removed five minutes later; the archive stays until the torrent is deleted. What is inside is then subject to the same rule as everything else: only video files reach the library. Archives are deliberately **not** put on any reject list: Sonarr does not even allow it, and it would throw away legitimate releases.
 
 Honest limits:
-- **Magnet links** have no file list to inspect before the download: they rely on layers 1–4 and 6.
+- **Magnet links** have no file list to inspect before the download: they rely on layers 1–4 and 6 until Cleanuparr has read their file list (layers 7 and 8, minutes later).
 - **Radarr has no release profile or air-date rule.** For movies the protection is the quality profile (no CAM/telesync), the size minimum, the seeders and *Minimum Availability*.
-- A file that is **not a video but has a video name** would be imported: nothing checks the *content* any more. Extracting an archive writes its content to disk (nothing is executed); `noexec` (layer 8) makes that harmless.
+- A file that is **not a video but has a video name** would be imported: nothing checks the *content* any more. Extracting an archive writes its content to disk (nothing is executed); `noexec` (layer 10) makes that harmless.
 - Extension and container checks do not detect a *valid* video file crafted to exploit a player. Keep Plex and your players updated.
 
 ## File size: what is configured
@@ -402,7 +427,7 @@ qBittorrent deletes a torrent **and its files** by itself once it has **seeded f
 
 Hardlinks only work when `downloads/complete` and `media/` are on the same filesystem (both live under `$DATA_DIR/data` and Sonarr/Radarr see them as one mount, `/data`): otherwise imports silently become copies (still safe for Plex, only wasteful).
 
-**The one thing that can be lost: a download that was never imported.** If Sonarr/Radarr could not import a finished download (unknown series, "import blocked" in *Activity → Queue*), the only copy is the one in `downloads/complete`, and qBittorrent deletes it after 3 days like the others. Look at the queue in Sonarr/Radarr from time to time. `./scripts/check_hardlinks.sh` lists them; **nobody runs it for you**: `setup.sh` runs it once, so run it yourself now and then (or from cron). It checks that Sonarr/Radarr have hardlinks on, that the two folders share a filesystem, which finished videos are *not* hardlinked into the library (grouped per release folder: never imported, or imported as a copy), any **executable or script that got downloaded** (a fake: it is listed apart, never run it), and which recent library files were copied. Archives are counted apart (Unpackerr extracts them, so the archive itself is never linked).
+**The one thing that can be lost: a download that was never imported.** If Sonarr/Radarr could not import a finished download (unknown series, "import blocked" in *Activity → Queue*), the only copy is the one in `downloads/complete`, and qBittorrent deletes it after 3 days like the others. **Cleanuparr deals with it for you** (6.7): a failed import that another release would fix is removed after an hour, blocklisted and searched again, so the title does not stay missing. What Cleanuparr cannot see is a torrent that is not in Sonarr/Radarr's queue at all (one you added by hand): `./scripts/check_hardlinks.sh` lists the finished videos that are *not* hardlinked into the library (grouped per release folder: never imported, or imported as a copy). It also checks that Sonarr/Radarr have hardlinks on, that the two folders share a filesystem, and which recent library files were copied. Archives are counted apart (Unpackerr extracts them, so the archive itself is never linked). **Nobody runs it for you**: `setup.sh` runs it once, so run it yourself now and then (or from cron).
 
 Tuning, all in `config/arr.yml`, then `./scripts/apply_arr_config.py`:
 
@@ -452,14 +477,7 @@ docker exec sonarr curl -s -o /dev/null -w "%{speed_download} bytes/s\n" https:/
 - **The VPN test is slow:** try another exit in `VPN_COUNTRIES` (comma separated list allowed). Mullvad no longer offers port forwarding, so only peers you can reach connect to you, which hurts poorly seeded torrents most.
 - **`dl_limit` not 0 or a scheduler on** in qBittorrent: check `GET /api/v2/app/preferences`.
 
-Drop a stuck release, blocklist it and search again (Radarr; Sonarr uses port 8989 and its own key):
-
-```bash
-curl -s -H "X-Api-Key: $RADARR_API_KEY" "http://$LAN_IP:7878/api/v3/queue" | python3 -c "
-import sys,json
-for r in json.load(sys.stdin)['records']: print(r['id'], r['title'])"
-curl -s -X DELETE -H "X-Api-Key: $RADARR_API_KEY" "http://$LAN_IP:7878/api/v3/queue/ID?removeFromClient=true&blocklist=true"
-```
+**Dropping a stuck release is Cleanuparr's job** (6.7): after an hour without progress it removes the download, blocklists the release and searches again. To do the same right now for one title: *Activity → Queue* in Sonarr/Radarr, remove it, tick *Remove from download client* and *Add to blocklist*, and search.
 
 ## 7. Day to day
 
@@ -469,6 +487,7 @@ docker compose logs -f gluetun                   # VPN logs
 ./scripts/leak_test.sh                           # does everything that downloads go through the VPN? (--kill-switch: also cut the tunnel)
 ./scripts/dedupe_downloads.py                    # two versions of the same download? (--apply removes them; runs daily from cron)
 ./scripts/check_hardlinks.sh                     # are hardlinks in place, which finished downloads are not linked to the library? (nobody runs it for you)
+./scripts/apply_cleanuparr_config.py --check     # is Cleanuparr still what config/arr.yml says? (changes nothing)
 ./scripts/setup.sh                               # bring everything to the state described in config/arr.yml (safe to repeat)
 ./scripts/apply_arr_config.py --check            # is the *arr setup still what config/arr.yml says? (changes nothing)
 ./scripts/apply_download_safety.py               # re-apply file filters (after adding indexers)
@@ -517,8 +536,8 @@ Something broke? `git revert <merge commit>`, then the same command.
 - All containers use `no-new-privileges`; every container except Gluetun also uses `cap_drop: ALL` (only the capabilities needed by the linuxserver init are added back). If a container refuses to start, remove `cap_drop` for that service and check `docker compose logs <service>`.
 - The Mullvad key is a Docker secret and `.env` is git-ignored.
 - **`./scripts/leak_test.sh` proves the VPN protection instead of assuming it.** It checks that every running container, except `gluetun`, `plex` and `homepage`, lives inside gluetun's network (so a service you add later without `network_mode: service:gluetun`, a second torrent client for example, is flagged as a leak *before* it matters), that the exit IP is a Mullvad server and not your home IP, that DNS goes through gluetun, and that qBittorrent is bound to `tun0`. `--kill-switch` also takes the tunnel down for a moment and checks that the torrent client is left with no connectivity at all (downloads pause for about 30 seconds). Run it after every change to `compose.yml`; `setup.sh` runs it too. What a VPN does not hide: your ISP sees that you use Mullvad (not what you download), Plex knows your library titles and watch history through your Plex account, and accounts on private trackers are yours.
-- **Tailscale ACLs:** everything on your tailnet that can reach the server can reach these UIs. In the Tailscale admin console, tag the server and allow only your own devices to its ports (80, 8080, 8989, 7878, 9696, 32400), so a compromised device on the tailnet cannot reach them all.
-- Every web UI has a login (set from `ARR_*` / `QBITTORRENT_*` / `HOMEPAGE_AUTH_PASSWORD` in `.env`). The apps run inside the VPN but they are still reachable by anyone who can reach `LAN_IP`.
+- **Tailscale ACLs:** everything on your tailnet that can reach the server can reach these UIs. In the Tailscale admin console, tag the server and allow only your own devices to its ports (80, 8080, 8989, 7878, 9696, 11011, 32400), so a compromised device on the tailnet cannot reach them all.
+- Every web UI has a login (set from `ARR_*` / `QBITTORRENT_*` / `HOMEPAGE_AUTH_PASSWORD` in `.env`; Cleanuparr uses the `ARR_*` one). The apps run inside the VPN but they are still reachable by anyone who can reach `LAN_IP`.
 - `services/` (each app's database and API keys) and `.env` are git-ignored: never commit them.
 
 ## Troubleshooting
@@ -550,6 +569,10 @@ Something broke? `git revert <merge commit>`, then the same command.
 | `recyclarr sync` reports `api_key`/401/connection errors | `SONARR_API_KEY` / `RADARR_API_KEY` are empty or wrong in `.env`; fix and `docker compose up -d recyclarr` |
 | `apply_download_safety.py`: `skipped ... is empty` or connection errors | Fill the API keys in `.env`; the script talks to `http://<LAN_IP>:<port>`, so run it from a machine in `LAN_SUBNETS` (the server itself is fine) |
 | A release disappeared / "Caution: Found executable" in Activity | The protection worked: the release was blocklisted and another one is tried |
+| `cleanuparr` restarts, its log says `/config is not writable` | Docker created `$BASE_DIR/services/cleanuparr` as root. `sudo chown "$PUID:$PGID" "$BASE_DIR/services/cleanuparr"`, then `docker compose up -d cleanuparr` (`setup.sh` creates it correctly) |
+| `apply_cleanuparr_config.py`: `cannot sign in to Cleanuparr` / `Account is locked` | `ARR_USERNAME` / `ARR_PASSWORD` in `.env` are the login Cleanuparr has *now* (8+ characters). After too many wrong tries it locks the account for a while: wait, or put the key from Cleanuparr (*Settings → Account*) in `.env` as `CLEANUPARR_API_KEY` |
+| `apply_cleanuparr_config.py`: `... saved, but the connection test failed` | Cleanuparr could not reach qBittorrent/Sonarr/Radarr: are they up (`docker compose ps`), and are `QBITTORRENT_PASSWORD` / the API keys in `.env` right? Fix and run it again (`--force` rewrites the secrets it keeps) |
+| Cleanuparr removed something you wanted | Read why in its UI (*Events*). Loosen `failed_import.patterns` / `stall_rules` in `arr.yml`, or add the hash, category or tracker to `ignored_downloads`, and run the script. To watch before it acts: `dry_run: true` |
 | Plex clients on the LAN play "remotely" | Put your home subnet in `LAN_SUBNETS` and run `./scripts/apply_arr_config.py` (it sets Plex's *LAN Networks*) |
 | Plex transcodes but the Dashboard never shows *(hw)* | Hardware transcoding needs Plex Pass, `/dev/dri` and permission to use it. `ls -l /dev/dri` on the host, `docker exec plex ls -l /dev/dri` and `docker exec plex id abc` (the user needs the group of `renderD128`). Try removing `cap_drop` for `plex` in `compose.yml`. No Intel GPU at all: remove the `devices:` block of `plex` and turn `HardwareAcceleratedCodecs` off in `config/arr.yml` |
 | Plex *Remote Access*: "Not available outside your network" | The router does not forward TCP 32400 to the server's LAN address, or the address changed (give the server a DHCP reservation), or your ISP uses CGNAT (your router's public IP differs from what a "what is my IP" site shows: IPv4 forwarding cannot work, ask the ISP for a public IPv4). Also check `docker compose ps plex` shows `0.0.0.0:32400->32400/tcp` |

@@ -51,3 +51,8 @@
           type: prowlarr
           url: http://gluetun:9696
           key: "{{HOMEPAGE_VAR_PROWLARR_KEY}}"
+    - Cleanuparr:
+        icon: mdi-broom
+        href: http://{{HOMEPAGE_VAR_LAN_IP}}:11011
+        description: Removes stuck downloads (VPN)
+        siteMonitor: http://gluetun:11011

@@ -20,10 +20,12 @@ python3 -c "import yaml" 2>/dev/null || { echo "PyYAML is missing: sudo apt inst
 step "Checking .env and compose.yml"
 docker compose config -q || { echo "compose.yml or .env is not valid (see the message above)"; exit 1; }
 
-step "Creating the download folders (complete / incomplete)"
+step "Creating the download folders (complete / incomplete) and Cleanuparr's data folder"
 set -a; . ./.env; set +a
 [ -n "${DATA_DIR:-}" ] || { echo "DATA_DIR is not set in .env"; exit 1; }
-mkdir -p "$DATA_DIR"/data/downloads/complete "$DATA_DIR"/data/downloads/incomplete \
+[ -n "${BASE_DIR:-}" ] || { echo "BASE_DIR is not set in .env"; exit 1; }
+# Cleanuparr runs as PUID:PGID and cannot write to a folder Docker would create as root, so it is made here
+mkdir -p "$DATA_DIR"/data/downloads/complete "$DATA_DIR"/data/downloads/incomplete "$BASE_DIR"/services/cleanuparr \
   || { echo "cannot create the folders: fix ownership first (README step 3)"; exit 1; }
 
 step "Starting the VPN and waiting for it to be healthy"
@@ -57,6 +59,9 @@ run ./scripts/apply_arr_config.py
 
 step "File filters (executables are rejected) and size ceiling"
 run ./scripts/apply_download_safety.py
+
+step "Cleanuparr: removes stuck, stalled and unimportable downloads and searches again (needs the keys from above)"
+run ./scripts/apply_cleanuparr_config.py
 
 step "Leak test: does everything that downloads go through the VPN? (network namespaces, exit IP, DNS, qBittorrent interface)"
 run ./scripts/leak_test.sh

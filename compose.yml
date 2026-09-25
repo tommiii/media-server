@@ -55,7 +55,7 @@ services:
       OWNED_ONLY: "yes"
       # LAN clients reach the UIs below; replies must not go through the tunnel
       FIREWALL_OUTBOUND_SUBNETS: ${LAN_SUBNETS:?set LAN_SUBNETS in .env}
-      FIREWALL_INPUT_PORTS: 8989,7878,9696,8080
+      FIREWALL_INPUT_PORTS: 8989,7878,9696,8080,11011
       # DNS over TLS through the tunnel (gluetun default), never the host/Docker resolver
       DNS_KEEP_NAMESERVER: "off"
       # do not ask third-party "what is my IP" APIs
@@ -71,13 +71,15 @@ services:
       - ${LAN_IP}:7878:7878 # radarr
       - ${LAN_IP}:9696:9696 # prowlarr
       - ${LAN_IP}:8080:8080 # qbittorrent
+      - ${LAN_IP}:11011:11011 # cleanuparr
     networks:
       - vpn_net
     restart: *restart
 
   # Arr stack + torrent client: same namespace, so they talk over localhost
   # (prowlarr -> sonarr/radarr: http://localhost:8989 / :7878, sonarr/radarr -> qbittorrent: localhost:8080,
-  #  sonarr/radarr -> prowlarr: http://localhost:9696, prowlarr -> flaresolverr: http://localhost:8191)
+  #  sonarr/radarr -> prowlarr: http://localhost:9696, prowlarr -> flaresolverr: http://localhost:8191,
+  #  cleanuparr -> qbittorrent/sonarr/radarr on their localhost ports)
   prowlarr:
     <<: [*hardened, *vpn]
     image: lscr.io/linuxserver/prowlarr:2.6.5.5623-ls162
@@ -201,6 +203,41 @@ services:
     volumes:
       # same path as Sonarr/Radarr and qBittorrent see (/data/downloads/...), so the paths they report match
       - ${DATA_DIR}/data/downloads:/data/downloads
+    restart: *restart
+
+  # Watches the Sonarr/Radarr queues and removes what will never finish: a torrent whose files were all refused (the stuck
+  # .exe ones), one that stalled, a finished download Sonarr/Radarr cannot import. Every removal is blocklisted in the app and
+  # starts a new search. Its settings live in config/arr.yml (`cleanuparr:`), applied by ./scripts/apply_cleanuparr_config.py;
+  # the database, logs and the blocklist file are in $BASE_DIR/services/cleanuparr, which must exist and belong to PUID:PGID
+  # (setup.sh creates it). Rootless image, read-only root filesystem, no capabilities.
+  cleanuparr:
+    <<: [*hardened, *vpn]
+    image: ghcr.io/cleanuparr/cleanuparr:2.10.8
+    container_name: cleanuparr
+    user: ${PUID}:${PGID}
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      gluetun:
+        condition: service_healthy
+        restart: true
+      sonarr:
+        condition: service_started
+      radarr:
+        condition: service_started
+      qbittorrent:
+        condition: service_started
+    environment:
+      TZ: ${TIMEZONE}
+    volumes:
+      - ${BASE_DIR}/services/cleanuparr:/config
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11011/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     restart: *restart
 
   # ---------------------------------------------------------------- outside the VPN

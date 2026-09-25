@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Make qBittorrent, Sonarr and Radarr refuse anything that is not a video release.
 
-Idempotent, standard library only. Reads LAN_IP and the API keys from .env and talks to the
+Idempotent. Reads LAN_IP and the API keys from .env and talks to the
 UIs published on the LAN address. Run it after the first setup and again whenever Prowlarr
 adds new indexers to Sonarr/Radarr (their "Fail Downloads" option is per indexer and empty
 by default, which is why executables can slip through).
@@ -10,7 +10,8 @@ by default, which is why executables can slip through).
     ./scripts/apply_download_safety.py --check    show what would change, change nothing
 
 What it sets
-  qBittorrent  never download files matching EXCLUDED_PATTERNS; never run external programs
+  qBittorrent  never download files matching `blocked_files` of config/arr.yml (the list the Cleanuparr
+               Malware Blocker uses too); never run external programs
   Sonarr       every indexer: fail (and blocklist) releases containing executables, "potentially
                dangerous" files or USER_REJECTED extensions; auto-redownload failed releases
   Radarr       same, without the user-defined list (Radarr has no such option), plus a hard
@@ -22,12 +23,17 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-# Wildcards, case-insensitive. Harmless to over-match here: a skipped stray file costs nothing.
-EXCLUDED_PATTERNS = [
-    "*.exe", "*.msi", "*.bat", "*.cmd", "*.com", "*.scr", "*.pif", "*.lnk", "*.vbs", "*.vbe",
-    "*.js", "*.jse", "*.wsf", "*.wsh", "*.ps1", "*.sh", "*.jar", "*.dll", "*.apk", "*.hta",
-    "*.reg", "*.cpl", "*.dmg", "*.pkg", "*.iso",
-]
+try:
+    import yaml
+except ImportError:
+    sys.exit("PyYAML is required:  sudo apt install python3-yaml   (or: pip install pyyaml)")
+
+ROOT = Path(__file__).resolve().parent.parent  # the repository root (this file lives in scripts/)
+# `blocked_files` of config/arr.yml: wildcards, case-insensitive. Harmless to over-match here: a skipped stray file costs nothing.
+_config = yaml.safe_load((ROOT / "config" / "arr.yml").read_text()) or {}
+EXCLUDED_PATTERNS = [p for p in _config.get("blocked_files") or [] if p]
+if not EXCLUDED_PATTERNS:
+    sys.exit("config/arr.yml: `blocked_files:` is empty, refusing to switch qBittorrent's file filter off")
 
 # Sonarr "Additional Rejected File Extensions". Must not contain archive or media extensions
 # (Sonarr refuses those) and avoids ".com": promo files like "www.site.com" would reject good releases.
@@ -150,7 +156,7 @@ def arr(name, port, host, key):
 
 
 def main():
-    env_file = Path(__file__).resolve().parent.parent / ".env"
+    env_file = ROOT / ".env"
     if not env_file.exists():
         sys.exit(".env not found (run this from the repository, after creating .env)")
     env = load_env(env_file)

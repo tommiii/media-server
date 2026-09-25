@@ -119,6 +119,105 @@ prowlarr:
     - definition: 1337x
       tags: [flaresolverr]
 
+# File names that are never wanted inside a download. One list, two users: qBittorrent never writes them to disk
+# (`Excluded file names`, applied by ./scripts/apply_download_safety.py) and the Cleanuparr Malware Blocker skips them
+# and drops a download that contains nothing else. Wildcards, case-insensitive; a `*` at the start means "ends with".
+# Archives (.rar .zip .7z) do NOT belong here: Unpackerr extracts them and they hold real releases. Harmless to
+# over-match: a skipped stray file costs nothing.
+blocked_files:
+  - "*.exe"
+  - "*.msi"
+  - "*.bat"
+  - "*.cmd"
+  - "*.com"
+  - "*.scr"
+  - "*.pif"
+  - "*.lnk"
+  - "*.vbs"
+  - "*.vbe"
+  - "*.js"
+  - "*.jse"
+  - "*.wsf"
+  - "*.wsh"
+  - "*.ps1"
+  - "*.sh"
+  - "*.jar"
+  - "*.dll"
+  - "*.apk"
+  - "*.hta"
+  - "*.reg"
+  - "*.cpl"
+  - "*.dmg"
+  - "*.pkg"
+  - "*.iso"
+
+# Cleanuparr (http://<LAN_IP>:11011): removes downloads that will never finish, blocklists the release and makes
+# Sonarr/Radarr search again. Applied by ./scripts/apply_cleanuparr_config.py (--check to preview). Login: `auth:` above
+# (password of 8+ characters). Schedules are Quartz cron expressions, seconds first.
+cleanuparr:
+  general:
+    dry_run: false                   # true: only log what would be removed (Cleanuparr's log), change nothing. Try it first if you like
+    display_support_banner: false
+    status_check_enabled: false      # no "is there a newer Cleanuparr" call; Renovate proposes the update
+    # VPN down = everything looks stalled: skip the run unless gluetun's health server (same namespace) answers 200.
+    connectivity_check_enabled: true
+    connectivity_check_urls:
+      - http://localhost:9999
+  download_client:
+    name: qBittorrent
+    type_name: qBittorrent
+    host: http://localhost:8080
+    username: ${QBITTORRENT_USERNAME:-admin}
+    password: ${QBITTORRENT_PASSWORD:-}
+  arrs:                              # API keys come from .env (filled by apply_arr_config.py)
+    sonarr: {url: "http://localhost:8989", api_key: "${SONARR_API_KEY:-}", version: 4}
+    radarr: {url: "http://localhost:7878", api_key: "${RADARR_API_KEY:-}", version: 6}
+  queue_cleaner:
+    enabled: true
+    cron: "0 0/5 * * * ?"            # every 5 minutes
+    downloading_metadata_max_strikes: 12   # a magnet link that never gets its metadata: 12 runs = 1 hour
+    process_no_content_id: false     # leave alone what Sonarr/Radarr cannot tie to a title (no search is possible for it)
+    ignored_downloads: []            # hash, category, tag or tracker domain; those are never touched
+    # A torrent whose files were ALL refused (qBittorrent's excluded names) is removed at once: nothing to set.
+    # A finished download Sonarr/Radarr cannot import, only for reasons another release would fix. What fixes itself
+    # ("still being unpacked", "Found archive file" while Unpackerr works, "not enough free space") is left alone.
+    # Add `Found archive file` to also drop password-protected fake archives (it then waits max_strikes runs).
+    failed_import:
+      max_strikes: 12                # 0 = never remove failed imports; otherwise at least 3
+      pattern_mode: Include
+      patterns:
+        - title mismatch
+        - not found in the grabbed release
+        - was unexpected considering
+        - No files found are eligible for import
+        - not imported or missing
+        - Unable to parse
+    # Download not moving for `max_strikes` consecutive runs (progress resets the count). Private torrents are only
+    # taken out of the app's queue, never deleted from qBittorrent (a private tracker punishes that).
+    stall_rules:
+      - name: Stalled
+        max_strikes: 12              # 12 runs = 1 hour without a byte
+        privacy_type: Both
+        min_completion_percentage: 0
+        max_completion_percentage: 100
+        reset_strikes_on_progress: true
+    # Optional: remove downloads that crawl. Left empty on purpose (a 4K film is slow behind Mullvad without port
+    # forwarding, and that is normal). Example:
+    #   - {name: Crawling, max_strikes: 36, privacy_type: Public, min_speed: 100KB, ignore_above_size: 25GB,
+    #      min_completion_percentage: 0, max_completion_percentage: 90}
+    slow_rules: []
+  malware_blocker:
+    enabled: true
+    cron: "0 0/5 * * * ?"
+    ignore_private: false
+    delete_private: false
+    process_no_content_id: false
+    # false: a download is removed only when ALL its files are blocked; otherwise just the blocked files are skipped.
+    # true: any blocked file removes the whole download (a real release rarely carries an .exe, but promo files like
+    # "www.site.com" match `*.com`).
+    delete_if_any_file_blocked: false
+    ignored_downloads: []
+
 plex:
   preferences:                       # ids as listed by Plex itself; unknown ones are skipped, empty values are ignored
     PublishServerOnPlexOnlineKey: true          # Settings > Remote Access: on
