@@ -119,9 +119,8 @@ prowlarr:
     - definition: 1337x
       tags: [flaresolverr]
 
-# File names that are never wanted inside a download. One list, two users: qBittorrent never writes them to disk
-# (`Excluded file names`, applied by ./scripts/apply_download_safety.py) and the Cleanuparr Malware Blocker skips them
-# and drops a download that contains nothing else. Wildcards, case-insensitive; a `*` at the start means "ends with".
+# File names that are never wanted inside a download. qBittorrent never writes them to disk (`Excluded file names`,
+# applied by ./scripts/apply_download_safety.py). Wildcards, case-insensitive; a `*` at the start means "ends with".
 # Archives (.rar .zip .7z) do NOT belong here: Unpackerr extracts them and they hold real releases. Harmless to
 # over-match: a skipped stray file costs nothing.
 blocked_files:
@@ -151,10 +150,44 @@ blocked_files:
   - "*.pkg"
   - "*.iso"
 
+# The only file names a download may contain: video, its subtitles, and archives (Unpackerr extracts those; a name cannot
+# tell what is inside, so an archive with no video fails to import and Cleanuparr removes it, see failed_import below).
+# Used by the Cleanuparr Malware Blocker as a WHITELIST: every other file is skipped, and a download with none of these is
+# removed, blocklisted, and searched again. Old-style volumes (.r00-.r99, .001-.009) are added by the script.
+allowed_files:
+  - "*.mkv"
+  - "*.mp4"
+  - "*.m4v"
+  - "*.avi"
+  - "*.mov"
+  - "*.wmv"
+  - "*.mpg"
+  - "*.mpeg"
+  - "*.ts"
+  - "*.m2ts"
+  - "*.webm"
+  - "*.flv"
+  - "*.vob"
+  - "*.divx"
+  - "*.ogm"
+  - "*.srt"
+  - "*.ass"
+  - "*.ssa"
+  - "*.sub"
+  - "*.idx"
+  - "*.sup"
+  - "*.vtt"
+  - "*.rar"
+  - "*.zip"
+  - "*.7z"
+
 # Cleanuparr (http://<LAN_IP>:11011): removes downloads that will never finish, blocklists the release and makes
-# Sonarr/Radarr search again. Applied by ./scripts/apply_cleanuparr_config.py (--check to preview). Login: `auth:` above
-# (password of 8+ characters). Schedules are Quartz cron expressions, seconds first.
+# Sonarr/Radarr search again. Applied by ./scripts/apply_cleanuparr_config.py (--check to preview). Schedules are Quartz
+# cron expressions, seconds first.
 cleanuparr:
+  login:                             # empty = the one of `auth:` above. Cleanuparr wants a password of 8+ characters
+    username: ${CLEANUPARR_USERNAME:-}
+    password: ${CLEANUPARR_PASSWORD:-}
   general:
     dry_run: false                   # true: only log what would be removed (Cleanuparr's log), change nothing. Try it first if you like
     display_support_banner: false
@@ -212,9 +245,9 @@ cleanuparr:
     ignore_private: false
     delete_private: false
     process_no_content_id: false
-    # false: a download is removed only when ALL its files are blocked; otherwise just the blocked files are skipped.
-    # true: any blocked file removes the whole download (a real release rarely carries an .exe, but promo files like
-    # "www.site.com" match `*.com`).
+    # The list is `allowed_files` above (whitelist). false: a download is removed only when NONE of its files is allowed;
+    # otherwise just the other files are skipped. true: any file that is not allowed removes the whole download
+    # (too strict: releases carry .nfo, samples and screenshots).
     delete_if_any_file_blocked: false
     ignored_downloads: []
 

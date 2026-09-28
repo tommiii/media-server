@@ -324,7 +324,7 @@ docker compose exec recyclarr recyclarr sync               # first sync, now (th
 
 Sonarr and Radarr never drop a download on their own: a torrent that stalls, or whose files were all refused, stays in the queue for ever. **Cleanuparr** checks their queues every 5 minutes, removes what will never finish, blocklists that release and makes the app search again. Nothing to check by hand.
 
-Its settings live in its own database, so `setup.sh` (or `./scripts/apply_cleanuparr_config.py`, `--check` to preview) copies them there from the `cleanuparr:` section of `config/arr.yml`. The first run creates the admin account from `ARR_USERNAME` / `ARR_PASSWORD` (8+ characters) and saves its API key in `.env`. Edit `arr.yml` and run the script again: what it covers is overwritten if you change it in Cleanuparr's UI.
+Its settings live in its own database, so `setup.sh` (or `./scripts/apply_cleanuparr_config.py`, `--check` to preview) copies them there from the `cleanuparr:` section of `config/arr.yml`. The first run creates the admin account from `ARR_USERNAME` / `ARR_PASSWORD` and saves its API key in `.env`. Cleanuparr needs a password of **8+ characters**: if yours is shorter, set `CLEANUPARR_PASSWORD` in `.env` (and optionally `CLEANUPARR_USERNAME`); the other apps keep `ARR_PASSWORD`. Edit `arr.yml` and run the script again: what it covers is overwritten if you change it in Cleanuparr's UI.
 
 | What it removes | When |
 |---|---|
@@ -332,14 +332,14 @@ Its settings live in its own database, so `setup.sh` (or `./scripts/apply_cleanu
 | A **stalled** download (private torrents only leave the app's queue, they stay in qBittorrent) | 1 hour without progress |
 | A **failed import**, only for reasons another release would fix (`title mismatch`, `not found in the grabbed release`...); not while Unpackerr is extracting | 1 hour |
 | A magnet link that never gets its **metadata** | 1 hour |
-| **Malware Blocker**: files matching `blocked_files` are skipped, and the download is removed if nothing wanted is left. This covers **magnet links**, which the indexer check cannot see | 5 minutes |
+| **Malware Blocker** (a whitelist): only video, subtitles and archives (`allowed_files`) are downloaded, every other file is skipped, and the download is removed if none of them is left. An archive with no video inside fails to import and goes with the failed imports. This covers **magnet links**, which the indexer check cannot see | 5 minutes |
 
 Slow downloads are not removed (a 4K film is slow behind Mullvad); an example rule is in `arr.yml`.
 
 - **Try it first:** `cleanuparr.general.dry_run: true` only logs what it would remove (Cleanuparr's *Events*).
 - **VPN down:** everything looks stalled, so it asks Gluetun's health server and skips the run.
 - **Only what Sonarr/Radarr grabbed:** a torrent you added by hand is left alone. `ignored_downloads` protects more.
-- **Not used:** its *Download Cleaner* (qBittorrent already deletes finished torrents, see [Clean-up](#clean-up-finished-downloads-are-deleted-after-3-days-the-library-keeps-its-files)) and its own file lists (they block `.rar`/`.zip`, which Unpackerr needs). The list is `blocked_files` in `arr.yml`; qBittorrent gets it from `apply_download_safety.py`, Cleanuparr from the file the script writes to `$BASE_DIR/services/cleanuparr/blocklist.txt`.
+- **Not used:** its *Download Cleaner* (qBittorrent already deletes finished torrents, see [Clean-up](#clean-up-finished-downloads-are-deleted-after-3-days-the-library-keeps-its-files)) and its ready-made file lists. Two lists in `arr.yml`: `blocked_files` (never wanted; qBittorrent gets it from `apply_download_safety.py`) and `allowed_files` (the only names allowed; Cleanuparr gets it from the file the script writes to `$BASE_DIR/services/cleanuparr/blocklist.txt`).
 
 ## Fake releases, executables and archives: how downloads are controlled
 
@@ -353,7 +353,7 @@ Torrent sites are full of fake releases: an `.exe` "codec", an archive with a pa
 | 4 | **Minimum seeders** (`minimum_seeders`, 10) | Rejects torrents nobody is sharing |
 | 5 | **Fail Downloads, per indexer** (set by `apply_download_safety.py`) | Reads the file list inside the `.torrent` **before** sending it to qBittorrent. A release with `.exe .bat .cmd .sh`, "potentially dangerous" files (`.lnk .scr .ps1 .vbs .arj .lzh .zipx`) or, in Sonarr, your extra extensions (`.msi .js .jar .dll .apk ...`) is rejected, blocklisted, and the next best release is tried. Look for *"Caution: Found executable..."* in Activity/History: that is it working |
 | 6 | **qBittorrent, *Excluded file names*** (set by `apply_download_safety.py`) | Whatever slips through (magnet links have no file list to inspect) is never written to disk if it matches `blocked_files` in `config/arr.yml` (`*.exe *.msi *.bat *.scr ...`). External-program hooks are disabled |
-| 7 | **Cleanuparr Malware Blocker** (6.7) | Every 5 minutes it reads the file list of each download Sonarr/Radarr grabbed, **magnet links included** (qBittorrent has the list a moment after the start), skips the files of `blocked_files` and, when nothing wanted is left, removes the download, blocklists the release and searches again |
+| 7 | **Cleanuparr Malware Blocker** (6.7) | Every 5 minutes it reads the file list of each download Sonarr/Radarr grabbed, **magnet links included** (qBittorrent has the list a moment after the start), skips every file that is not in `allowed_files` (video, subtitles, archives) and, when nothing wanted is left, removes the download, blocklists the release and searches again |
 | 8 | **Cleanuparr Queue Cleaner** (6.7) | A torrent whose files layer 6 refused ends at 0 bytes and would stay in the queue for ever: it is removed at once, blocklisted, and another release is searched |
 | 9 | **Import** | Only files with a video extension are ever moved into the library. Everything else stays in `downloads/complete` and is deleted with the torrent after 3 days |
 | 10 | *(optional)* **`noexec` on the data disk** | In `/etc/fstab` add `noexec,nosuid,nodev` to the mount options of the disk that holds `DATA_DIR`: nothing stored there can be executed, whatever it is |
@@ -570,7 +570,7 @@ Something broke? `git revert <merge commit>`, then the same command.
 | `apply_download_safety.py`: `skipped ... is empty` or connection errors | Fill the API keys in `.env`; the script talks to `http://<LAN_IP>:<port>`, so run it from a machine in `LAN_SUBNETS` (the server itself is fine) |
 | A release disappeared / "Caution: Found executable" in Activity | The protection worked: the release was blocklisted and another one is tried |
 | `cleanuparr` restarts, its log says `/config is not writable` | Docker created `$BASE_DIR/services/cleanuparr` as root. `sudo chown "$PUID:$PGID" "$BASE_DIR/services/cleanuparr"`, then `docker compose up -d cleanuparr` (`setup.sh` creates it correctly) |
-| `apply_cleanuparr_config.py`: `cannot sign in to Cleanuparr` / `Account is locked` | `ARR_USERNAME` / `ARR_PASSWORD` in `.env` are the login Cleanuparr has *now* (8+ characters). After too many wrong tries it locks the account for a while: wait, or put the key from Cleanuparr (*Settings → Account*) in `.env` as `CLEANUPARR_API_KEY` |
+| `apply_cleanuparr_config.py`: `cannot sign in to Cleanuparr` / `Account is locked` | `CLEANUPARR_USERNAME` / `CLEANUPARR_PASSWORD` (else `ARR_USERNAME` / `ARR_PASSWORD`) in `.env` are the login Cleanuparr has *now*. After too many wrong tries it locks the account for a while: wait, or put the key from Cleanuparr (*Settings → Account*) in `.env` as `CLEANUPARR_API_KEY` |
 | `apply_cleanuparr_config.py`: `... saved, but the connection test failed` | Cleanuparr could not reach qBittorrent/Sonarr/Radarr: are they up (`docker compose ps`), and are `QBITTORRENT_PASSWORD` / the API keys in `.env` right? Fix and run it again (`--force` rewrites the secrets it keeps) |
 | Cleanuparr removed something you wanted | Read why in its UI (*Events*). Loosen `failed_import.patterns` / `stall_rules` in `arr.yml`, or add the hash, category or tracker to `ignored_downloads`, and run the script. To watch before it acts: `dry_run: true` |
 | Plex clients on the LAN play "remotely" | Put your home subnet in `LAN_SUBNETS` and run `./scripts/apply_arr_config.py` (it sets Plex's *LAN Networks*) |

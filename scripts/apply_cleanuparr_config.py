@@ -10,11 +10,11 @@ Run it on the server, from the repository, once the containers are up. It talks 
 stay in this repository. Needs PyYAML: sudo apt install python3-yaml
 
 What it does, in this order
-  1. Account: on the first start creates the admin account from `auth:` (ARR_USERNAME / ARR_PASSWORD), then writes the
-     API key into .env as CLEANUPARR_API_KEY and uses it from then on.
+  1. Account: on the first start creates the admin account from CLEANUPARR_USERNAME / CLEANUPARR_PASSWORD (else ARR_USERNAME /
+     ARR_PASSWORD; 8+ characters), then writes the API key into .env as CLEANUPARR_API_KEY and uses it from then on.
   2. General settings, the qBittorrent connection, and the Sonarr / Radarr instances (each connection is tested).
   3. Queue Cleaner: schedule, failed-import rules, and the stalled / slow rules (rules not in arr.yml are removed).
-  4. Malware Blocker: schedule, and the blocklist file built from `blocked_files:`.
+  4. Malware Blocker: schedule, and the whitelist file built from `allowed_files:` (only video, subtitles and archives).
      The file goes to $BASE_DIR/services/cleanuparr/blocklist.txt, which the container sees as /config/blocklist.txt.
 Settings that arr.yml does not mention are left as they are.
 """
@@ -191,12 +191,16 @@ def authenticate(base, env, login):
 
     user, password = login.get("username"), login.get("password")
     if not user or not password:
-        problem("no login for Cleanuparr: set ARR_USERNAME and ARR_PASSWORD in .env (at least 8 characters), "
-                "or put the API key (Cleanuparr: Settings, Account) in .env as CLEANUPARR_API_KEY")
+        problem("no login for Cleanuparr: set ARR_USERNAME and ARR_PASSWORD (or CLEANUPARR_USERNAME and CLEANUPARR_PASSWORD) "
+                "in .env, or put the API key (Cleanuparr: Settings, Account) in .env as CLEANUPARR_API_KEY")
         return None
 
     status = http("GET", f"{base}/api/auth/status")
     if not pick(status, "setupCompleted"):
+        if len(password) < 8:
+            problem(f"the Cleanuparr password is {len(password)} characters and it wants 8 or more. Set CLEANUPARR_PASSWORD in .env "
+                    "(any 8+ characters; ARR_PASSWORD stays as it is for Sonarr, Radarr and Prowlarr) and run this again")
+            return None
         note(f"admin account '{user}' created")
         if CHECK:
             return None  # nothing else can be looked at without an account
@@ -382,14 +386,14 @@ def malware_blocker(base, headers, cfg):
     cfg = dict(cfg)
     cfg["cron_expression"] = cfg.pop("cron")
     cfg["use_advanced_scheduling"] = True
-    blocklist = {"enabled": True, "blocklist_type": "Blacklist", "blocklist_path": BLOCKLIST_IN_CONTAINER}
+    blocklist = {"enabled": True, "blocklist_type": "Whitelist", "blocklist_path": BLOCKLIST_IN_CONTAINER}
     cfg["sonarr"], cfg["radarr"] = dict(blocklist), dict(blocklist)
     sync_config(base, headers, "settings", "/api/configuration/malware_blocker", cfg)
 
 
 def write_blocklist(env, patterns):
     """The list of arr.yml as a file for Cleanuparr: one pattern per line, no comments (it has no comment syntax)."""
-    print("Blocklist")
+    print("Whitelist")
     base_dir = env.get("BASE_DIR", "")
     if not base_dir or not (Path(base_dir) / "services").is_dir():
         problem("BASE_DIR is not set in .env or has no services/ folder: cannot write the blocklist file")
@@ -415,10 +419,11 @@ def main():
     if not isinstance(loaded, dict) or "cleanuparr" not in loaded:
         sys.exit("config/arr.yml has no `cleanuparr:` section")
     # only the sections used here: the others (Plex, ...) need variables this script has no business with
-    cfg = {name: expand(loaded.get(name), env) for name in ("auth", "blocked_files", "cleanuparr")}
-    patterns = [p for p in (cfg.get("blocked_files") or []) if p]
+    cfg = {name: expand(loaded.get(name), env) for name in ("auth", "allowed_files", "cleanuparr")}
+    patterns = [p for p in (cfg.get("allowed_files") or []) if p]
     if not patterns:
-        sys.exit("config/arr.yml: `blocked_files:` is empty, the Malware Blocker would have nothing to block")
+        sys.exit("config/arr.yml: `allowed_files:` is empty, the Malware Blocker would refuse every file")
+    patterns += [f"*.r{n:02d}" for n in range(100)] + [f"*.{n:03d}" for n in range(1, 10)]  # rar / split-file volumes
     host = env.get("LAN_IP", "127.0.0.1")
     host = "127.0.0.1" if host in ("", "0.0.0.0") else host
     base = f"http://{host}:{PORT}"
@@ -427,7 +432,9 @@ def main():
     print("Cleanuparr")
     write_blocklist(env, patterns)  # first: Cleanuparr refuses a Malware Blocker setting whose file does not exist
     if wait_ready(base):
-        headers = authenticate(base, env, cfg.get("auth") or {})
+        own, shared = section.get("login") or {}, cfg.get("auth") or {}
+        login = {k: own.get(k) or shared.get(k) for k in ("username", "password")}
+        headers = authenticate(base, env, login)
         if headers:
             steps = (
                 ("general", lambda: general(base, headers, section.get("general") or {})),
