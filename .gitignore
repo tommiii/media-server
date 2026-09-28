@@ -4,3 +4,4 @@ wireguard_private_key
 wg_confs/
 # app data and configuration created on the server (databases, API keys)
 services/
+__pycache__/
