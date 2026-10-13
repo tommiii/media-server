@@ -68,8 +68,6 @@ sonarr:
     #                   any release the profile allows may replace it (remuxes are not in the profile, and Sonarr's stops at 1080p).
     #   false         = none.
     assign_to_existing: without_files
-  remove_download_clients:           # leftovers from the previous setup
-    - Deluge
 
 radarr:
   hardlinks: true
@@ -84,8 +82,6 @@ radarr:
   quality_profile:
     name: Movies - best available     # Bluray/4K, then 1080p, 720p, 480p (see config/recyclarr/configs/media.yml)
     assign_to_existing: without_files   # same options and warning as in the sonarr section
-  remove_download_clients:
-    - Deluge
 
 prowlarr:
   flaresolverr:
@@ -263,3 +259,52 @@ plex:
   libraries:                         # Plex mounts $DATA_DIR at /data/media, hence the doubled "data/media"
     - {name: Movies, type: movie, path: /data/media/data/media/movies}
     - {name: TV Shows, type: show, path: /data/media/data/media/tv-shows}
+
+# Homarr dashboard (http://<LAN_IP>). Homarr keeps everything in its own database, so ./scripts/apply_homarr_config.py (--check to
+# preview) creates these integrations and the default board through its API. Needs HOMARR_API_KEY in .env: create the admin user in
+# the browser first, then Manage > Tools > API > Authentication > new API key. Idempotent and additive: what exists (by name) is
+# skipped, so your own edits in Homarr are never overwritten. To rebuild the default board, delete it in Homarr and run it again.
+homarr:
+  # Hosts are the ones Homarr itself uses: it sits on the Docker networks, so the VPN group is reached as gluetun:<port>.
+  integrations:
+    - name: Plex
+      kind: plex
+      url: http://plex:32400
+      secrets: {apiKey: "${PLEX_TOKEN:-}"}
+      app: {icon: plex, href: "http://${LAN_IP}:32400/web", description: Streaming}
+    - name: Sonarr
+      kind: sonarr
+      url: http://gluetun:8989
+      secrets: {apiKey: "${SONARR_API_KEY:-}"}
+      app: {icon: sonarr, href: "http://${LAN_IP}:8989", description: TV}
+    - name: Radarr
+      kind: radarr
+      url: http://gluetun:7878
+      secrets: {apiKey: "${RADARR_API_KEY:-}"}
+      app: {icon: radarr, href: "http://${LAN_IP}:7878", description: Movies}
+    - name: Prowlarr
+      kind: prowlarr
+      url: http://gluetun:9696
+      secrets: {apiKey: "${PROWLARR_API_KEY:-}"}
+      app: {icon: prowlarr, href: "http://${LAN_IP}:9696", description: Indexers}
+    - name: qBittorrent
+      kind: qBittorrent
+      url: http://gluetun:8080
+      secrets: {username: "${QBITTORRENT_USERNAME:-admin}", password: "${QBITTORRENT_PASSWORD:-}"}
+      app: {icon: qbittorrent, href: "http://${LAN_IP}:8080", description: Torrents}
+  # Default board, created only if no board with this name exists. Tiles are placed in this order, first free spot, left to right.
+  # kind = Homarr widget kind; integrations = names from above; app = an integration's launcher tile; size is in grid cells.
+  board:
+    name: media
+    columns: 12
+    tiles:
+      - {kind: app, app: Plex, size: [2, 1]}
+      - {kind: app, app: Sonarr, size: [2, 1]}
+      - {kind: app, app: Radarr, size: [2, 1]}
+      - {kind: app, app: Prowlarr, size: [2, 1]}
+      - {kind: app, app: qBittorrent, size: [2, 1]}
+      - {kind: clock, size: [2, 1]}
+      - {kind: mediaServer, integrations: [Plex], size: [4, 3]}
+      - {kind: downloads, integrations: [qBittorrent], size: [8, 3]}
+      - {kind: calendar, integrations: [Sonarr, Radarr], size: [4, 4]}
+      - {kind: indexerManager, integrations: [Prowlarr], size: [4, 4]}

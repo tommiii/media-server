@@ -1,4 +1,4 @@
-x-common: &common
+x-common:
   environment: &env
     PUID: ${PUID}
     PGID: ${PGID}
@@ -266,37 +266,23 @@ services:
       - plex_net
     restart: *restart
 
-  # Dashboard: the three config files that matter live in this repo (./config/homepage/*.yaml, mounted read-only),
-  # no Docker socket. Homepage insists on finding a few other (empty) files; it creates them itself in the
-  # writable $BASE_DIR/services/homepage, outside the repo.
-  # Sits on vpn_net + plex_net so widgets can call gluetun:<port> and plex:32400 directly.
-  homepage:
+  # Dashboard (Homarr). It keeps its settings (users, integrations, boards) in a database inside
+  # $BASE_DIR/services/homarr, so there is no config file to mount; the integrations and the default board are
+  # created from config/arr.yml (`homarr:`) by ./scripts/apply_homarr_config.py. No Docker socket.
+  # Sits on vpn_net + plex_net so integrations can call gluetun:<port> and plex:32400 directly.
+  # The first user you create in the browser becomes the admin (do it right after the first start).
+  homarr:
     <<: *hardened
-    image: ghcr.io/gethomepage/homepage:v2.4.0
-    container_name: homepage
+    image: ghcr.io/homarr-labs/homarr:v2.4.1
+    container_name: homarr
     cap_add: *init-caps
     environment:
       <<: *env
-      LOG_TARGETS: stdout
-      HOMEPAGE_ALLOWED_HOSTS: ${HOMEPAGE_ALLOWED_HOSTS:-${LAN_IP}}
-      HOMEPAGE_AUTH_ENABLED: "true"
-      HOMEPAGE_EXTERNAL_URL: http://${LAN_IP}
-      HOMEPAGE_AUTH_SECRET: ${HOMEPAGE_AUTH_SECRET:?set HOMEPAGE_AUTH_SECRET in .env (openssl rand -base64 32)}
-      HOMEPAGE_AUTH_PASSWORD: ${HOMEPAGE_AUTH_PASSWORD:?set HOMEPAGE_AUTH_PASSWORD in .env}
-      # substituted into ./config/homepage/*.yaml as {{HOMEPAGE_VAR_...}}
-      HOMEPAGE_VAR_LAN_IP: ${LAN_IP}
-      HOMEPAGE_VAR_SONARR_KEY: ${SONARR_API_KEY:-}
-      HOMEPAGE_VAR_RADARR_KEY: ${RADARR_API_KEY:-}
-      HOMEPAGE_VAR_PROWLARR_KEY: ${PROWLARR_API_KEY:-}
-      HOMEPAGE_VAR_QBITTORRENT_KEY: ${QBITTORRENT_API_KEY:-}
-      HOMEPAGE_VAR_PLEX_TOKEN: ${PLEX_TOKEN:-}
+      SECRET_ENCRYPTION_KEY: ${HOMARR_SECRET_ENCRYPTION_KEY:?set HOMARR_SECRET_ENCRYPTION_KEY in .env (openssl rand -hex 32)}
     volumes:
-      - ${BASE_DIR}/services/homepage:/app/config
-      - ./config/homepage/settings.yaml:/app/config/settings.yaml:ro
-      - ./config/homepage/services.yaml:/app/config/services.yaml:ro
-      - ./config/homepage/widgets.yaml:/app/config/widgets.yaml:ro
+      - ${BASE_DIR}/services/homarr:/appdata
     ports:
-      - ${LAN_IP}:80:3000
+      - ${LAN_IP}:80:7575
     networks:
       - vpn_net
       - plex_net

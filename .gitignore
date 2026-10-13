@@ -5,3 +5,4 @@ wg_confs/
 # app data and configuration created on the server (databases, API keys)
 services/
 __pycache__/
+.DS_Store

@@ -48,7 +48,7 @@ docker compose up -d || exit 1
 step "Configuring qBittorrent, Sonarr, Radarr, Prowlarr (indexers included) and Plex from arr.yml"
 run ./scripts/apply_arr_config.py
 
-step "Recreating containers that read the new API keys (Homepage, Recyclarr)"
+step "Recreating containers that read the new API keys (Homarr, Recyclarr)"
 run docker compose up -d
 
 step "Recyclarr: quality profiles, custom formats and size limits"
@@ -62,6 +62,9 @@ run ./scripts/apply_download_safety.py
 
 step "Cleanuparr: removes stuck, stalled and unimportable downloads and searches again (needs the keys from above)"
 run ./scripts/apply_cleanuparr_config.py
+
+step "Homarr: integrations and the default board (needs HOMARR_API_KEY; skipped until you have created the admin user, README 6.5)"
+run ./scripts/apply_homarr_config.py
 
 step "Leak test: does everything that downloads go through the VPN? (network namespaces, exit IP, DNS, qBittorrent interface)"
 run ./scripts/leak_test.sh

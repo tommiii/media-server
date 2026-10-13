@@ -10,12 +10,12 @@ published on LAN_IP (see .env). Needs PyYAML: sudo apt install python3-yaml
 
 What it does, in this order
   1. Reads the API keys of Sonarr/Radarr/Prowlarr from their config.xml and, if they are empty
-     in .env, writes them there (Homepage and Recyclarr use them).
+     in .env, writes them there (Homarr and Recyclarr use them).
   2. qBittorrent: signs in (on first start with the temporary password from `docker logs`),
      sets the web UI user/password, applies the preferences and the clean-up of finished
      downloads (days of seeding), makes sure an API key exists.
   3. Sonarr/Radarr: login, hardlinks, root folders, qBittorrent download client (the app tests the
-     connection), removes leftover clients (e.g. Deluge).
+     connection).
   4. Prowlarr: login, FlareSolverr proxy + tag, the indexers listed in arr.yml (the app tests each
      one), links to Sonarr and Radarr.
   5. Sonarr: a release profile that refuses releases published before the episode aired
@@ -411,13 +411,6 @@ def arr(name, host, key, cfg, auth, qbit):
         upsert_provider(base, headers, "downloadclient", "QBittorrent", name_, wanted, top=top)
     elif dc:
         print("  download client: skipped (qBittorrent login unavailable)")
-
-    for implementation in cfg.get("remove_download_clients", []):
-        for client in request("GET", f"{base}/downloadclient", headers):
-            if client["implementation"].lower() == implementation.lower():
-                note(f"remove download client '{client['name']}'")
-                if not CHECK:
-                    request("DELETE", f"{base}/downloadclient/{client['id']}", headers)
 
     if name == "sonarr" and cfg.get("release_profile"):
         apply_release_profile(base, headers, cfg["release_profile"])

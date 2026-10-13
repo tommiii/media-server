@@ -18,7 +18,7 @@ set -u
 cd "$(dirname "$0")/.." || exit 2
 
 # Containers allowed to have their own network. Everything else must be inside gluetun's.
-OUTSIDE_VPN=(gluetun plex homepage)
+OUTSIDE_VPN=(gluetun plex homarr)
 PROBE=qbittorrent                      # container used for the exit-IP and kill-switch probes
 MULLVAD="https://am.i.mullvad.net"
 
