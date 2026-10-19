@@ -39,7 +39,7 @@ compose.yml            the stack (containers, networks, ports)
 renovate.json          image update pull requests
 scripts/               setup.sh (one command for everything), apply_arr_config.py, apply_download_safety.py,
                        apply_cleanuparr_config.py, apply_bazarr_config.py, leak_test.sh, check_hardlinks.sh,
-                       dedupe_downloads.py, cron.sh
+                       dedupe_downloads.py, guard_unaired.py, cron.sh
 config/
   arr.yml              desired state of qBittorrent, Sonarr, Radarr, Prowlarr (indexers), Cleanuparr, Bazarr and Plex
   recyclarr/           quality profiles and size limits (TRaSH)
@@ -356,7 +356,7 @@ Torrent sites are full of fake releases: an `.exe` "codec", an archive with a pa
 | # | Where | What it does |
 |---|---|---|
 | 1 | **Quality profile + Recyclarr** | Only the qualities of the profile (no CAM or telesync). TRaSH custom formats score down BR-DISK, LQ, fake and low-quality release groups |
-| 2 | **Sonarr release profile** (`sonarr.release_profile` in `config/arr.yml`) | Two rules. **Title ends in an executable extension** (`.exe .msi .scr .bat ...`): rejected, because a real torrent name never does (this is how the fake `...-NTb.exe` "episode" looked). **"Reject Unaired Releases"**: refuses any release published *before the episode aired*, the day-before fakes; this one exists only in Sonarr versions newer than 4.0.20, so on an older Sonarr the script says so and only the title rule is active |
+| 2 | **Sonarr release profile** (`sonarr.release_profile` in `config/arr.yml`) | Two rules. **Title ends in an executable extension** (`.exe .msi .scr .bat ...`): rejected, because a real torrent name never does (this is how the fake `...-NTb.exe` "episode" looked). **"Reject Unaired Releases"**: refuses any release published *before the episode aired*, the day-before fakes; this one exists only in Sonarr versions newer than 4.0.20, so on an older Sonarr the script says so and only the title rule is active. Until then **`guard_unaired.py`** does the same job right after the grab: every minute (cron, installed by `setup.sh` / `./scripts/cron.sh install`) it removes from the queue, with blocklist and without a new search, any download of an episode whose release day (in `TIMEZONE`) has not come yet. Same switches (`reject_unaired`, `grace_days`); log in `$BASE_DIR/services/unaired.log` |
 | 3 | **Size limits** (Recyclarr) | Below the minimum MB per minute a release is rejected: a 3 MB "episode" never passes (a 45-minute WEB-DL 1080p must be at least ~700 MB) |
 | 4 | **Minimum seeders** (`minimum_seeders`, 10) | Rejects torrents nobody is sharing |
 | 5 | **Fail Downloads, per indexer** (set by `apply_download_safety.py`) | Reads the file list inside the `.torrent` **before** sending it to qBittorrent. A release with `.exe .bat .cmd .sh`, "potentially dangerous" files (`.lnk .scr .ps1 .vbs .arj .lzh .zipx`) or, in Sonarr, your extra extensions (`.msi .js .jar .dll .apk ...`) is rejected, blocklisted, and the next best release is tried. Look for *"Caution: Found executable..."* in Activity/History: that is it working |
@@ -424,7 +424,7 @@ Try it without changing anything, whenever you like:
 ```bash
 ./scripts/dedupe_downloads.py            # "WOULD REMOVE ..." / "KEEP ...", nothing is changed
 ./scripts/dedupe_downloads.py --apply    # do it now
-./scripts/cron.sh show                   # is the daily job installed?  (./scripts/cron.sh remove takes it out)
+./scripts/cron.sh show                   # are the jobs installed?  (./scripts/cron.sh remove takes them out)
 ```
 
 Limits: it removes duplicates, it does not prevent them. To avoid the first cause, add series through Sonarr and films through Radarr instead of adding torrents by hand. A torrent it cannot recognise (a name Sonarr/Radarr cannot parse) is left alone.

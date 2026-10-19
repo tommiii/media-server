@@ -58,7 +58,8 @@ sonarr:
   # airs. Two defences, both in one Sonarr release profile:
   release_profile:
     reject_unaired: true             # refuse releases published before the episode aired. Needs a NEWER Sonarr than 4.0.20:
-                                     # on an older one it is skipped (the script says so) and only `ignored` applies
+                                     # on an older one it is skipped (the script says so); scripts/guard_unaired.py (cron, every
+                                     # minute) then removes and blocklists what Sonarr grabbed before the release day
     grace_days: 0                    # 0 = published at or after the air date; negative allows earlier, positive waits
     ignored:                         # title patterns that reject a release: a torrent named like a file ending in .exe is a fake
       - '/\.(exe|msi|scr|bat|cmd|com|lnk|vbs|js|jar|apk)$/'
