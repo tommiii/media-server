@@ -40,6 +40,9 @@ qbittorrent:
 
 sonarr:
   hardlinks: true                    # import by hardlink: instant, no extra disk space
+  # Subtitle files that come WITH the release (.srt next to the video, Subs/ folder) are imported next to it, named
+  # Episode.it.srt. Bazarr then sees them and downloads only the languages still missing (see `bazarr:` below).
+  extra_files: [srt, ass, ssa, sub, idx, sup, vtt]
   # A file that was downloaded is NEVER replaced by a better one. false turns "Upgrades Allowed" off in every quality
   # profile (also the old ones your existing titles use) and sets Propers/Repacks to "Do Not Prefer". The search still
   # takes the best quality available WHEN it runs; it just never comes back for a better one later.
@@ -72,6 +75,7 @@ sonarr:
 radarr:
   hardlinks: true
   upgrades: false                    # same as in the sonarr section: a downloaded movie is never replaced
+  extra_files: [srt, ass, ssa, sub, idx, sup, vtt]   # same as in the sonarr section
   root_folders:
     - /data/media/movies
   download_client:
@@ -246,6 +250,72 @@ cleanuparr:
     # (too strict: releases carry .nfo, samples and screenshots).
     delete_if_any_file_blocked: false
     ignored_downloads: []
+
+# Bazarr (http://<LAN_IP>:6767): subtitles for everything Sonarr/Radarr import. Applied by ./scripts/apply_bazarr_config.py
+# (--check to preview). Sonarr/Radarr tell Bazarr about each import as it happens, and it searches right away; what is still
+# missing is searched again every 6 hours, and a subtitle found in the first 7 days is replaced by a better one if one appears.
+bazarr:
+  login:                             # empty = the one of `auth:` above
+    username: ${BAZARR_USERNAME:-}
+    password: ${BAZARR_PASSWORD:-}
+  sonarr: {ip: localhost, port: 8989, apikey: "${SONARR_API_KEY:-}"}   # API keys from .env (filled by apply_arr_config.py)
+  radarr: {ip: localhost, port: 7878, apikey: "${RADARR_API_KEY:-}"}
+  # The languages profile every series and movie gets (new ones automatically, existing ones if they have none). Each
+  # language is a separate subtitle: Movie.it.srt and Movie.en.srt. A language the release already has (an mkv track, or
+  # a subtitle file that came with it) counts as present, so nothing is downloaded for it.
+  profile:
+    name: Italiano + English
+    languages: [it, en]
+    hearing_impaired: allowed        # allowed (a normal one is preferred) | required | excluded: the [door creaks] kind
+  # Subtitle sites. One whose credential is empty in .env is left off. The ones without an account do not cover much in
+  # Italian (Gestdown: series only, YIFY: movies only), so the free accounts below are what makes Italian work:
+  #   OpenSubtitles.com: the biggest, and it matches by file hash (the exact release). Free account on opensubtitles.com
+  #                      (20 subtitles a day): OPENSUBTITLES_USERNAME / OPENSUBTITLES_PASSWORD in .env
+  #   SubDL:             free API key on subdl.com (profile, API): SUBDL_API_KEY
+  #   Subsource:         free API key on subsource.net (profile): SUBSOURCE_API_KEY
+  providers:
+    gestdown: {}                     # Addic7ed's subtitles (series, Italian included), no account
+    yifysubtitles: {}                # movies, no account
+    supersubtitles: {}               # series and movies, mostly English, no account
+    opensubtitlescom:
+      username: ${OPENSUBTITLES_USERNAME:-}
+      password: ${OPENSUBTITLES_PASSWORD:-}
+      use_hash: true                 # exact-release match first
+      include_ai_translated: false   # translated by a machine: wrong more often than not
+      include_machine_translated: false
+    subdl:
+      api_key: ${SUBDL_API_KEY:-}
+      include_ai_translated: false
+    subsource:
+      apikey: ${SUBSOURCE_API_KEY:-}
+  # Any other Bazarr setting, by its name in Bazarr's config.yaml (section: {key: value}). Bazarr's defaults are good for
+  # the rest; these are the ones that differ or matter.
+  settings:
+    general:
+      use_scenename: true            # match on the release name (group, source, resolution): the subtitle of THAT release
+      minimum_score: 90              # % match below which a subtitle is not taken (series; Bazarr's default)
+      minimum_score_movie: 70        # movies (Bazarr's default: movie subtitles carry less to match on)
+      # Only what the release does NOT have is downloaded: a subtitle track inside the video counts as present, and so
+      # does a subtitle file that came with it (imported next to the video, `extra_files` above).
+      use_embedded_subs: true
+      ignore_pgs_subs: false         # true = embedded image subtitles (PGS, VobSub) do not count, a text .srt is downloaded
+      ignore_vobsub_subs: false      #   too: on clients that cannot show them, Plex burns them into the video (CPU transcode)
+      upgrade_subs: true             # replace a subtitle with a better match...
+      days_to_upgrade_subs: 7        # ...for 7 days after the download
+      wanted_search_frequency: 6     # hours between searches for what is still missing (series)
+      wanted_search_frequency_movie: 6
+      adaptive_searching: true       # a title with nothing found after 3 weeks is searched once a week, not every 6 hours
+      auto_update: false             # the image is updated by Renovate, not by Bazarr itself
+    sonarr:
+      exclude_season_zero: true      # no subtitles for specials
+    subsync:                         # shifts a subtitle to match the audio (ffsubsync). Only for the ones that do not
+      use_subsync: true              # match the exact release (below the threshold): those are often a few seconds off.
+      use_subsync_threshold: true    # About a minute of CPU per subtitle, nothing for exact matches
+      subsync_threshold: 96
+      use_subsync_movie_threshold: true
+      subsync_movie_threshold: 86
+    analytics:
+      enabled: false                 # no usage statistics to Bazarr's developers
 
 plex:
   preferences:                       # ids as listed by Plex itself; unknown ones are skipped, empty values are ignored

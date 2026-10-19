@@ -375,6 +375,13 @@ def arr(name, host, key, cfg, auth, qbit):
     media_changes = {}
     if "hardlinks" in cfg and media.get("copyUsingHardlinks") != cfg["hardlinks"]:
         media_changes["copyUsingHardlinks"] = cfg["hardlinks"]
+    if cfg.get("extra_files"):
+        # subtitles that come with the release are imported next to the video, so Bazarr finds them and downloads nothing
+        extensions = ",".join(cfg["extra_files"])
+        if not media.get("importExtraFiles"):
+            media_changes["importExtraFiles"] = True
+        if media.get("extraFileExtensions") != extensions:
+            media_changes["extraFileExtensions"] = extensions
     if cfg.get("upgrades") is False:
         # "Do Not Prefer": a Proper/Repack is not treated as better than the file you have
         current = media.get("downloadPropersAndRepacks")

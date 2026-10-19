@@ -63,6 +63,9 @@ run ./scripts/apply_download_safety.py
 step "Cleanuparr: removes stuck, stalled and unimportable downloads and searches again (needs the keys from above)"
 run ./scripts/apply_cleanuparr_config.py
 
+step "Bazarr: subtitles for every import, only the languages the release does not have (needs the keys from above)"
+run ./scripts/apply_bazarr_config.py
+
 step "Homarr: integrations and the default board (needs HOMARR_API_KEY; skipped until you have created the admin user, README 6.5)"
 run ./scripts/apply_homarr_config.py
 

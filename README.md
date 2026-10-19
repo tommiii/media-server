@@ -13,10 +13,11 @@ Self-hosted media server where **everything that searches or downloads runs behi
 | Recyclarr | Keeps quality profiles / custom formats in sync (TRaSH Guides) | ✅ | – |
 | Unpackerr | Extracts releases that come as archives so Sonarr/Radarr can import them | ✅ | – |
 | Cleanuparr | Removes downloads that will never finish (every file refused, stalled, cannot be imported) and makes Sonarr/Radarr search again | ✅ | `http://<LAN_IP>:11011` |
+| Bazarr | Subtitles (Italian + English) for everything Sonarr/Radarr import, only for the languages the release does not already have | ✅ | `http://<LAN_IP>:6767` |
 | Plex | Media streaming, **reachable from the internet** (router port forward) | ❌ | `http://<any server address>:32400/web` |
 | Homarr | Dashboard with tiles and widgets (login required) | ❌ | `http://<LAN_IP>` |
 
-Prowlarr, FlareSolverr, Sonarr, Radarr, qBittorrent, Recyclarr, Unpackerr and Cleanuparr share Gluetun's network namespace: they have no network interface other than the VPN tunnel, so if the tunnel drops they simply have no connection (no leak). That is also why they talk to each other on `localhost`.
+Prowlarr, FlareSolverr, Sonarr, Radarr, qBittorrent, Recyclarr, Unpackerr, Cleanuparr and Bazarr share Gluetun's network namespace: they have no network interface other than the VPN tunnel, so if the tunnel drops they simply have no connection (no leak). That is also why they talk to each other on `localhost`.
 
 ---
 
@@ -24,7 +25,7 @@ Prowlarr, FlareSolverr, Sonarr, Radarr, qBittorrent, Recyclarr, Unpackerr and Cl
 
 1. `git clone <this repo> media-server && cd media-server`, then `cp .env.sample .env && chmod 600 .env` and fill in `.env` (step 2).
 2. Create the folders (step 3) and put your Mullvad key in place (step 4).
-3. Run **`./scripts/setup.sh`**: it starts everything and configures qBittorrent, Sonarr, Radarr, Prowlarr, Cleanuparr, Plex and the quality profiles from `config/arr.yml`, without you opening a web UI (section 6.0).
+3. Run **`./scripts/setup.sh`**: it starts everything and configures qBittorrent, Sonarr, Radarr, Prowlarr, Cleanuparr, Bazarr, Plex and the quality profiles from `config/arr.yml`, without you opening a web UI (section 6.0).
 4. **Open TCP port 32400 on your router** and point it to the server, so Plex works from outside your home (see [Open the Plex port on your router](#open-the-plex-port-on-your-router)).
 5. Open the dashboard at `http://<LAN_IP>`, create the admin user, make an API key and run `./scripts/apply_homarr_config.py` (section 6.5).
 
@@ -37,10 +38,10 @@ compose.yml            the stack (containers, networks, ports)
 .env.sample            copy to .env and fill in (never committed)
 renovate.json          image update pull requests
 scripts/               setup.sh (one command for everything), apply_arr_config.py, apply_download_safety.py,
-                       apply_cleanuparr_config.py, leak_test.sh, check_hardlinks.sh,
+                       apply_cleanuparr_config.py, apply_bazarr_config.py, leak_test.sh, check_hardlinks.sh,
                        dedupe_downloads.py, cron.sh
 config/
-  arr.yml              desired state of qBittorrent, Sonarr, Radarr, Prowlarr (indexers), Cleanuparr and Plex
+  arr.yml              desired state of qBittorrent, Sonarr, Radarr, Prowlarr (indexers), Cleanuparr, Bazarr and Plex
   recyclarr/           quality profiles and size limits (TRaSH)
 services/              created on the server: each app's own data (git-ignored)
 ```
@@ -96,7 +97,7 @@ If Docker creates the folders itself they end up owned by root and the apps cann
 
 ```bash
 set -a; . ./.env; set +a
-mkdir -p "$BASE_DIR"/services/{gluetun,prowlarr,sonarr,radarr,qbittorrent,recyclarr,cleanuparr,homarr,plex}
+mkdir -p "$BASE_DIR"/services/{gluetun,prowlarr,sonarr,radarr,qbittorrent,recyclarr,cleanuparr,bazarr,homarr,plex}
 mkdir -p "$DATA_DIR"/data/{downloads/{complete,incomplete},media/{tv-shows,movies}}
 sudo chown -R "$PUID:$PGID" "$BASE_DIR/services" "$DATA_DIR/data"
 ```
@@ -162,7 +163,7 @@ If `gluetun` is not healthy, see [Troubleshooting](#troubleshooting).
 
 ## 6. Configure the apps
 
-Everything is configured **from files**, without opening the UIs: `config/arr.yml` describes the desired state of qBittorrent, Sonarr, Radarr, Prowlarr (indexers included), Cleanuparr and Plex, and `./scripts/setup.sh` (or `./scripts/apply_arr_config.py` alone) applies it. Sections 6.1–6.4 describe the same settings by hand, for reference or if you prefer the UIs.
+Everything is configured **from files**, without opening the UIs: `config/arr.yml` describes the desired state of qBittorrent, Sonarr, Radarr, Prowlarr (indexers included), Cleanuparr, Bazarr and Plex, and `./scripts/setup.sh` (or `./scripts/apply_arr_config.py` alone) applies it. Sections 6.1–6.4 describe the same settings by hand, for reference or if you prefer the UIs.
 
 ### 6.0 Automatic setup (recommended)
 
@@ -187,6 +188,7 @@ Everything is configured **from files**, without opening the UIs: `config/arr.ym
 | `apply_arr_config.py` again | Puts the Recyclarr quality profiles on the titles that have **no file yet** (see below) |
 | `apply_download_safety.py` | File filters (executables) and size ceiling |
 | `apply_cleanuparr_config.py` | Cleanuparr: account, connections, and the rules that remove stuck, stalled and unimportable downloads (6.7) |
+| `apply_bazarr_config.py` | Bazarr: login, Sonarr/Radarr connections, subtitle providers, the Italian + English profile on every title (6.8) |
 | `apply_homarr_config.py` | Homarr: integrations and the default board. Skipped until `HOMARR_API_KEY` is in `.env` (6.5): after the first run, create the admin user, add the key and run `./scripts/setup.sh` again |
 | `leak_test.sh` | Verifies that everything that searches or downloads goes through Mullvad (see the security model) |
 | `check_hardlinks.sh` | Diagnostic: are hardlinks really in place, and which finished downloads are not linked to the library (see below) |
@@ -197,7 +199,7 @@ What `apply_arr_config.py` does (`--check` shows it without changing anything):
 |---|---|
 | API keys | Reads the Sonarr, Radarr and Prowlarr keys from their `config.xml` and the Plex token from `Preferences.xml`, and writes them into `.env` if empty (Homarr and Recyclarr use them) |
 | qBittorrent | Signs in (on the first start with the temporary password from `docker logs`), sets your web UI login, finished downloads in `/data/downloads/complete` and unfinished ones in `/data/downloads/incomplete` (partial files get a `.!qB` extension), UPnP off, network interface `tun0`, **deletes a torrent and its files 3 days after it finished seeding** (the library keeps its copy: hardlinks), and generates an API key into `.env` |
-| Sonarr / Radarr | Forms login (always required), hardlinks on, root folders, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), Sonarr also gets a release profile that rejects titles ending in an executable extension (and releases published before the episode aired, where Sonarr supports it), upgrades are switched off in every quality profile, puts the Recyclarr quality profile on the titles that have no file yet |
+| Sonarr / Radarr | Forms login (always required), hardlinks on, subtitle files that come with a release imported next to the video (`extra_files`), root folders, qBittorrent download client with category `tv` / `movies` (the app tests the connection before saving), Sonarr also gets a release profile that rejects titles ending in an executable extension (and releases published before the episode aired, where Sonarr supports it), upgrades are switched off in every quality profile, puts the Recyclarr quality profile on the titles that have no file yet |
 | Prowlarr | Forms login, FlareSolverr proxy with tag `flaresolverr`, **the indexers listed in `config/arr.yml`** (Prowlarr tests each one), links to Sonarr and Radarr (full sync, so the indexers reach both), removes indexers whose definition Prowlarr no longer has (switch: `remove_orphaned_indexers`), sets the **minimum seeders** (`minimum_seeders`, 10) that Sonarr/Radarr require |
 | Plex | Turns *Remote Access* on with a manually forwarded port (32400), sets *LAN Networks* (your `LAN_SUBNETS`), adds the URLs of `PLEX_CUSTOM_URLS` if you set it, transcodes in RAM (`/transcode`) with hardware acceleration on, creates the *Movies* and *TV Shows* libraries |
 
@@ -330,6 +332,22 @@ Slow downloads are not removed (a 4K film is slow behind Mullvad); an example ru
 - **VPN down:** everything looks stalled, so it asks Gluetun's health server and skips the run.
 - **Only what Sonarr/Radarr grabbed:** a torrent you added by hand is left alone. `ignored_downloads` protects more.
 - **Not used:** its *Download Cleaner* (qBittorrent already deletes finished torrents, see [Clean-up](#clean-up-finished-downloads-are-deleted-after-3-days-the-library-keeps-its-files)) and its ready-made file lists. Two lists in `arr.yml`: `blocked_files` (never wanted; qBittorrent gets it from `apply_download_safety.py`) and `allowed_files` (the only names allowed; Cleanuparr gets it from the file the script writes to `$BASE_DIR/services/cleanuparr/blocklist.txt`).
+
+### 6.8 Bazarr (subtitles) — `http://<LAN_IP>:6767`
+
+Sonarr and Radarr tell Bazarr about every import as it happens; it looks for an **Italian and an English** subtitle for that exact release and writes `Movie.it.srt` / `Movie.en.srt` next to the video, where Plex picks it up on its next automatic scan. What is still missing is searched again every 6 hours (a title with nothing after 3 weeks only once a week), and for 7 days a subtitle is replaced if a better match appears.
+
+**Only what the release does not have is downloaded.** A subtitle track inside the video (mkv) counts as present for its language, and so does a subtitle file that came with the release: Sonarr/Radarr import it next to the video (`extra_files` in `arr.yml`), where Bazarr sees it. A release with Italian subtitles inside gets only the English one, if that is missing.
+
+`setup.sh` (or `./scripts/apply_bazarr_config.py`, `--check` to preview) applies the `bazarr:` section of `config/arr.yml`: login (`ARR_USERNAME` / `ARR_PASSWORD`, or `BAZARR_USERNAME` / `BAZARR_PASSWORD`), the Sonarr and Radarr connections, the providers, the profile (default for new titles, and given to existing titles that have none) and the settings listed there. It reads Bazarr's API key from `$BASE_DIR/services/bazarr/config/config.yaml`.
+
+- **Matching the release:** a subtitle is taken only when it matches the release name and the file well enough (90% for episodes, 70% for movies). One that does not match the exact release is shifted to the audio (*subsync*, about a minute of CPU each); exact matches are left as they are.
+- **Providers: Italian needs a free account.** Without one, Bazarr uses Gestdown (Addic7ed: series, Italian included), YIFY (movies) and SuperSubtitles (mostly English), which find little Italian for movies. Free accounts make the difference: put any of them in `.env` and run the script again (a provider with an empty credential is left off):
+  - `OPENSUBTITLES_USERNAME` / `OPENSUBTITLES_PASSWORD`: [opensubtitles.com](https://www.opensubtitles.com), the biggest, matches by file hash; the free account downloads about 20 subtitles a day.
+  - `SUBDL_API_KEY`: [subdl.com](https://subdl.com), profile → API.
+  - `SUBSOURCE_API_KEY`: [subsource.net](https://subsource.net), profile.
+- **Other languages:** change `profile.languages` (two-letter codes) and run the script.
+- **Machine and AI translations are refused.**
 
 ## Fake releases, executables and archives: how downloads are controlled
 
@@ -478,6 +496,7 @@ docker compose logs -f gluetun                   # VPN logs
 ./scripts/dedupe_downloads.py                    # two versions of the same download? (--apply removes them; runs daily from cron)
 ./scripts/check_hardlinks.sh                     # are hardlinks in place, which finished downloads are not linked to the library? (nobody runs it for you)
 ./scripts/apply_cleanuparr_config.py --check     # is Cleanuparr still what config/arr.yml says? (changes nothing)
+./scripts/apply_bazarr_config.py --check         # is Bazarr still what config/arr.yml says? (changes nothing)
 ./scripts/setup.sh                               # bring everything to the state described in config/arr.yml (safe to repeat)
 ./scripts/apply_arr_config.py --check            # is the *arr setup still what config/arr.yml says? (changes nothing)
 ./scripts/apply_download_safety.py               # re-apply file filters (after adding indexers)
@@ -527,8 +546,8 @@ Something broke? `git revert <merge commit>`, then the same command.
 - All containers use `no-new-privileges`; every container except Gluetun also uses `cap_drop: ALL` (only the capabilities needed by the linuxserver init are added back). If a container refuses to start, remove `cap_drop` for that service and check `docker compose logs <service>`.
 - The Mullvad key is a Docker secret and `.env` is git-ignored.
 - **`./scripts/leak_test.sh` proves the VPN protection instead of assuming it.** It checks that every running container, except `gluetun`, `plex` and `homarr`, lives inside gluetun's network (so a service you add later without `network_mode: service:gluetun`, a second torrent client for example, is flagged as a leak *before* it matters), that the exit IP is a Mullvad server and not your home IP, that DNS goes through gluetun, and that qBittorrent is bound to `tun0`. `--kill-switch` also takes the tunnel down for a moment and checks that the torrent client is left with no connectivity at all (downloads pause for about 30 seconds). Run it after every change to `compose.yml`; `setup.sh` runs it too. What a VPN does not hide: your ISP sees that you use Mullvad (not what you download), Plex knows your library titles and watch history through your Plex account, and accounts on private trackers are yours.
-- **Tailscale ACLs:** everything on your tailnet that can reach the server can reach these UIs. In the Tailscale admin console, tag the server and allow only your own devices to its ports (80, 8080, 8989, 7878, 9696, 11011, 32400), so a compromised device on the tailnet cannot reach them all.
-- Every web UI has a login (set from `ARR_*` / `QBITTORRENT_*` / your Homarr admin user; Cleanuparr uses the `ARR_*` one). The apps run inside the VPN but they are still reachable by anyone who can reach `LAN_IP`.
+- **Tailscale ACLs:** everything on your tailnet that can reach the server can reach these UIs. In the Tailscale admin console, tag the server and allow only your own devices to its ports (80, 8080, 8989, 7878, 9696, 11011, 6767, 32400), so a compromised device on the tailnet cannot reach them all.
+- Every web UI has a login (set from `ARR_*` / `QBITTORRENT_*` / your Homarr admin user; Cleanuparr and Bazarr use the `ARR_*` one). The apps run inside the VPN but they are still reachable by anyone who can reach `LAN_IP`.
 - `services/` (each app's database and API keys) and `.env` are git-ignored: never commit them.
 
 ## Troubleshooting

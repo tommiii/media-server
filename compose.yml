@@ -55,7 +55,7 @@ services:
       OWNED_ONLY: "yes"
       # LAN clients reach the UIs below; replies must not go through the tunnel
       FIREWALL_OUTBOUND_SUBNETS: ${LAN_SUBNETS:?set LAN_SUBNETS in .env}
-      FIREWALL_INPUT_PORTS: 8989,7878,9696,8080,11011,8000,8888
+      FIREWALL_INPUT_PORTS: 8989,7878,9696,8080,11011,6767,8000,8888
       # control server (port 8000), read by retro-dashboard's VPN window; every route needs the API key
       HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE: '{"auth":"apikey","apikey":"${GLUETUN_API_KEY:?set GLUETUN_API_KEY in .env}"}'
       # HTTP proxy that exits through the tunnel (port 8888): retro-dashboard asks Mullvad through it which server you are on
@@ -82,6 +82,7 @@ services:
       - ${LAN_IP}:9696:9696 # prowlarr
       - ${LAN_IP}:8080:8080 # qbittorrent
       - ${LAN_IP}:11011:11011 # cleanuparr
+      - ${LAN_IP}:6767:6767 # bazarr
       - ${LAN_IP}:8000:8000 # gluetun control server (retro-dashboard VPN window)
       - ${LAN_IP}:8888:8888 # gluetun HTTP proxy, only on when GLUETUN_PROXY_PASSWORD is set (retro-dashboard)
     networks:
@@ -91,7 +92,7 @@ services:
   # Arr stack + torrent client: same namespace, so they talk over localhost
   # (prowlarr -> sonarr/radarr: http://localhost:8989 / :7878, sonarr/radarr -> qbittorrent: localhost:8080,
   #  sonarr/radarr -> prowlarr: http://localhost:9696, prowlarr -> flaresolverr: http://localhost:8191,
-  #  cleanuparr -> qbittorrent/sonarr/radarr on their localhost ports)
+  #  cleanuparr -> qbittorrent/sonarr/radarr on their localhost ports, bazarr -> sonarr/radarr: localhost:8989 / :7878)
   prowlarr:
     <<: [*hardened, *vpn]
     image: lscr.io/linuxserver/prowlarr:2.6.5.5623-ls162
@@ -250,6 +251,30 @@ services:
       timeout: 10s
       start_period: 30s
       retries: 3
+    restart: *restart
+
+  # Subtitles (Bazarr): Sonarr/Radarr tell it about every import (live, over SignalR), it searches the providers for the
+  # languages of its profile and writes Movie.it.srt next to the video, where Plex finds it. Inside the VPN like the rest:
+  # the providers never see your home address. Its settings (connections, languages, providers) live in its database and
+  # config.yaml under $BASE_DIR/services/bazarr; they come from config/arr.yml (`bazarr:`) via ./scripts/apply_bazarr_config.py.
+  # Same /data as Sonarr/Radarr, so the paths they report need no mapping; read-write, because the subtitles go there.
+  bazarr:
+    <<: [*hardened, *vpn]
+    image: lscr.io/linuxserver/bazarr:v1.6.2-ls368
+    container_name: bazarr
+    cap_add: *init-caps
+    depends_on:
+      gluetun:
+        condition: service_healthy
+        restart: true
+      sonarr:
+        condition: service_started
+      radarr:
+        condition: service_started
+    environment: *env
+    volumes:
+      - ${BASE_DIR}/services/bazarr:/config
+      - ${DATA_DIR}/data:/data
     restart: *restart
 
   # ---------------------------------------------------------------- outside the VPN
