@@ -256,6 +256,9 @@ plex:
     customConnections: ${PLEX_CUSTOM_URLS:-}    # extra URLs Plex advertises: Tailscale address, a DDNS name (comma separated)
     TranscoderTempDirectory: /transcode         # the 6 GB tmpfs of compose.yml: transcoding happens in RAM (the image default is the disk)
     HardwareAcceleratedCodecs: true             # Settings > Transcoder > hardware acceleration (needs Plex Pass and /dev/dri)
+    # Settings > Library > Analyze audio tracks for loudness: off, it decodes every audio track and keeps the CPU busy for
+    # hours. Only useful for music (volume levelling, Sweet Fades). never | scheduled (Plex's default) | asap
+    LoudnessAnalysisBehavior: never
   libraries:                         # Plex mounts $DATA_DIR at /data/media, hence the doubled "data/media"
     - {name: Movies, type: movie, path: /data/media/data/media/movies}
     - {name: TV Shows, type: show, path: /data/media/data/media/tv-shows}
